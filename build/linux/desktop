@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=SSHNat
+Comment=SSH port forwarding client
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/sshnat %u
+Terminal=false
+Type=Application
+Icon=sshnat
+Categories=Utility;
+StartupWMClass=sshnat
+
+ 

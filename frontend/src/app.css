@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+/*
+ * SSHNat 设计系统（深色为主）
+ * 视觉基调：Linear/Vercel 式开发者工具。扁平无阴影，
+ * 深度靠色阶 + 1px 边框表达；圆角 8px / 卡片内小元素 4px。
+ * 浅色主题通过 CSS 变量映射自动派生。
+ */
+
+:root,
+[data-theme="dark"] {
+  /* 深色（默认） */
+  --c-base: #0d1117;   /* 页面背景 */
+  --c-panel: #161b22;  /* 卡片 */
+  --c-edge: #30363d;   /* 边框 */
+  --c-hover: #1f242c;  /* hover 态 */
+  --c-accent: #22d3ee; /* 主色青 */
+  --c-ok: #4ade80;     /* 成功绿 */
+  --c-warn: #ffb13b;   /* 警告橙黄 */
+  --c-bad: #f87171;    /* 错误红 */
+  --c-ink: #dde4e5;    /* 正文 */
+  --c-dim: #8b949e;    /* 次要文字 */
+}
+
+[data-theme="light"] {
+  --c-base: #f6f8fa;
+  --c-panel: #ffffff;
+  --c-edge: #d0d7de;
+  --c-hover: #eaeef2;
+  --c-accent: #0891b2;
+  --c-ok: #16a34a;
+  --c-warn: #b45309;
+  --c-bad: #dc2626;
+  --c-ink: #1f2328;
+  --c-dim: #59636e;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --c-base: #f6f8fa;
+    --c-panel: #ffffff;
+    --c-edge: #d0d7de;
+    --c-hover: #eaeef2;
+    --c-accent: #0891b2;
+    --c-ok: #16a34a;
+    --c-warn: #b45309;
+    --c-bad: #dc2626;
+    --c-ink: #1f2328;
+    --c-dim: #59636e;
+  }
+}
+
+@theme inline {
+  --color-base: var(--c-base);
+  --color-panel: var(--c-panel);
+  --color-edge: var(--c-edge);
+  --color-hover: var(--c-hover);
+  --color-accent: var(--c-accent);
+  --color-ok: var(--c-ok);
+  --color-warn: var(--c-warn);
+  --color-bad: var(--c-bad);
+  --color-ink: var(--c-ink);
+  --color-dim: var(--c-dim);
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+
+  --radius-card: 8px;   /* 卡片圆角 */
+  --radius-chip: 4px;   /* 卡片内小元素 */
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    @apply bg-base text-ink font-sans antialiased;
+    font-size: 14px;
+    user-select: none;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--c-accent) 30%, transparent);
+  }
+  input,
+  textarea {
+    user-select: text;
+  }
+  /* 滚动条与整体风格一致 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--c-edge) transparent;
+  }
+}
