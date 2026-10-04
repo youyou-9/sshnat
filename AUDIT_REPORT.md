@@ -32,12 +32,12 @@
 | 启停清理 | 全部停止后监听端口已释放 |
 | 配置导出/导入 | 脱敏、非法版本拒绝、IPv6/socket 合并、运行时替换拒绝、停止后备份替换与文件恢复通过 |
 | 外观 | 中文浅色、英文深色；960×600 表格操作按钮可见，无页面横向溢出 |
-| 浏览器错误 | 最新生产构建 0 console errors；保留 Wails 浏览器模式提示 |
+| 浏览器错误 | Wails server 实际操作场景 0 console errors；保留 Wails 浏览器模式提示；最终原生构建另行验证 |
 | actionlint、git diff --check | 通过 |
 | Go 漏洞扫描 | 0 可达、0 导入包漏洞；未使用的 OpenPGP 模块提示见 DEPENDENCY_AUDIT.md |
 | SSH 命令兼容 | 共享 fixture 经 TS formatter、shell 解析、Go 导入和保存往返；PowerShell/Git Bash 的实际 ssh -G 通过 |
 | Windows 原生实际运行 | SSH 隧道 256 KiB 精确回显；关闭窗口后再次传输成功；再次启动恢复同一窗口；停止后端口释放 |
-| Windows 原生文件保存 | 脱敏 JSON 保存成功（2 hosts / 3 tunnels）；取消返回错误的问题已修正并增加回归 |
+| Windows 原生文件保存 | 脱敏 JSON 保存成功（2 hosts / 3 tunnels）；取消返回错误的问题已修正、增加回归，并在重建后原生复测通过 |
 | Linux 安装包元数据 | deb/rpm/Arch 架构、GTK3/GTK4 选择与 0755 权限验证；本机仅使用临时 payload 检查元数据 |
 
 界面测试使用 Wails 的 server 构建连接真实 Go 服务，以及仅绑定 loopback 的临时
@@ -51,10 +51,11 @@ SSH/echo 服务。该测试验证 RPC、状态事件、配置与转发；另以 
 发行压缩包的解压、内容、执行权限和 SHA256 检查。PR 会生成 `dev` 预览产物；
 只有最终 `v*` tag 才发布 GitHub Release。
 
-第一轮完整 CI（`a4fb617`）已通过：
-[run 37232504715](https://github.com/youyou-9/sshnat/actions/runs/37232504715)。
-本轮安全、命令、托盘及包修复需要最终提交的完整 CI 再次通过；Linux GUI job
-也校验真实 GTK3 deb 并在 Xvfb 中检查原生启动。
+最终代码提交 `6f8c1c7b664f2c58cccef1f25a8b1d2a3f182d78` 的完整 CI 已通过：
+[run 37236286787](https://github.com/youyou-9/sshnat/actions/runs/37236286787)。
+质量门禁（含 race 和漏洞扫描）、三平台 GUI、六目标 daemon、Docker 及发行包
+校验全部成功；Linux GUI job 也校验了真实 GTK3 deb，并在 Xvfb 中通过原生启动检查。
+`release-files` artifact 包含九个已验证的发行预览压缩包和 `SHA256SUMS`。
 
 发行前还需按 [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) 确认原生托盘及 macOS
 实际关闭/退出/保存行为。当前本机 Docker engine 未运行，race 所需 C 编译器不可用；
@@ -64,5 +65,19 @@ SSH/echo 服务。该测试验证 RPC、状态事件、配置与转发；另以 
 本机 Node 25.9 不在 jsdom 30 的声明支持范围内，安装有 engine 提示但测试和构建通过；
 CI 使用受支持的 Node 24.15 再次验证。现有正式版本是 v1.0.0，新增功能以
 1.1.0-rc.1 作本机候选验证，未创建 tag 或发布 Release。
+
+## 发行评估
+
+本轮已发现的问题均已修复，代码及自动化发行门禁通过，可作为 **1.1.0-rc.1
+发行候选版**交付验证。Windows 本机候选程序使用该版本；PR 的跨平台预览包使用
+`dev` 版本，不能直接视为最终 tag 的产物。
+
+稳定版仍需真实托盘菜单点击/退出、macOS 原生关闭/退出/保存检查。支持的本机
+自动化工具仅暴露应用窗口，未完成 Windows 系统托盘的实际点击；单元测试和
+构建成功不能替代这项验证。Linux 安装包的目标发行版安装验证也尚未执行，且这些
+安装包不属于当前九个发行压缩包。不将上述未验证范围宣称为已通过。
+
+修复及功能改进已提交到 [PR #2](https://github.com/youyou-9/sshnat/pull/2)，
+保持草稿供审阅；未合并、创建 tag 或发布 GitHub Release。
 
 本报告记录已执行的检查，不表示任意环境或未覆盖场景不存在缺陷。
