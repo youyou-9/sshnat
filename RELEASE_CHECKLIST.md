@@ -2,15 +2,17 @@
 
 ## 1. 自动化质量门禁
 
-在仓库根目录执行（Go 1.25+、Node.js 24.15+）：
+在仓库根目录执行（Go 1.26.6+、Node.js 24.15+）：
 
 ```bash
 npm --prefix frontend ci
+npm --prefix frontend audit
 npm --prefix frontend run check
 npm --prefix frontend test -- --run
 npm --prefix frontend run build
 go test ./...
 go vet ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 git diff --check
 ```
 
@@ -49,6 +51,11 @@ wails3 task build VERSION=1.0.0
 
 Linux GTK3 构建添加 `EXTRA_TAGS=gtk3`；macOS 用
 `wails3 task darwin:package VERSION=1.0.0` 创建 `.app`。
+
+Linux deb/rpm/Arch 安装包需在构建和打包时使用相同的 `EXTRA_TAGS`。
+例如 `wails3 task linux:create:deb EXTRA_TAGS=gtk3 VERSION=1.0.0` 会自动
+选用 GTK3/WebKitGTK 4.1 依赖。CI 校验 GTK3 deb 的架构、依赖和执行权限；
+安装包在目标发行版中的实际安装及桌面集成仍需单独验证。
 
 检查以下行为：
 
@@ -91,7 +98,7 @@ daemon 是否退出；目标可用性使用实际转发服务探测。
 - GitHub Build 的 quality、gui、daemon、docker、package jobs 全部通过。
 - 每个压缩包包含二进制、`LICENSE`、中英文 README；Unix 解压后可直接执行。
 - macOS `.app` 内 `Contents/MacOS/sshnat` 保留执行权限；Windows 包为 `.zip`。
-- release job 生成 `SHA256SUMS`，下载后执行 `sha256sum -c SHA256SUMS` 验证文件。
+- package job 生成 `SHA256SUMS`，release job 再次验证；下载后执行 `sha256sum -c SHA256SUMS` 验证文件。
 - 最终 tag 与运行时/原生包版本一致，工作树已提交，发行说明列出用户可见的新功能和修复。
 
 PR 与手动 workflow_dispatch 均会生成并解压校验九个发行包，验证文档、Unix 执行权限及 SHA256SUMS，

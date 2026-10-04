@@ -10,7 +10,7 @@
   <Identity 
     Name="com.sshnat.app"
     Publisher="CN=SSHNat"
-    Version="1.0.0.0"
+    Version="1.1.0.0"
     ProcessorArchitecture="x64" />
   
   <Properties>

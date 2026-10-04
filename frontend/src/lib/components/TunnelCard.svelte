@@ -44,7 +44,7 @@
   async function copyCliCommand() {
     actionError = "";
     try {
-      const cmd = buildTunnelCliCommand(tunnel, hostObj, { hosts: app.hosts });
+      const cmd = buildTunnelCliCommand(tunnel, hostObj, { hosts: app.hosts, useAppDefaults: true });
       if (await copyText(cmd)) {
         copied = true;
         setTimeout(() => (copied = false), 1500);

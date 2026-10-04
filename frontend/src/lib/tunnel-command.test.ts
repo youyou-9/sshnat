@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildTunnelCliCommand, copyText, formatTunnelRoute } from "./tunnel-command";
 import type { Host } from "./api";
+import advancedCommands from "./test-fixtures/advanced-ssh-commands.json";
 
 function sshHost(id: string, overrides: Partial<Host> = {}): Host {
   return { id, name: id, user: "root", host: `${id}.example`, port: 22, auth: { method: "password" }, ...overrides };
@@ -14,6 +15,25 @@ afterEach(() => {
 });
 
 describe("tunnel route and SSH command formatting", () => {
+  for (const fixture of advancedCommands) {
+    it(`preserves advanced options in the ${fixture.shell} import fixture for ${fixture.host.host}`, () => {
+      expect(buildTunnelCliCommand(fixture.tunnel, fixture.host, { shell: fixture.shell as "posix" | "powershell", useAppDefaults: fixture.useAppDefaults })).toBe(fixture.command);
+    });
+  }
+
+  it("keeps explicit empty host key policy and the default agent semantically portable", () => {
+    const host = sshHost("destination", { hostKeyPolicy: "", auth: { method: "agent", agentSocket: "" } });
+    expect(buildTunnelCliCommand({ type: "D", socksPort: 1080 }, host, { shell: "posix" })).toBe(
+      "ssh -o StrictHostKeyChecking=accept-new -o IdentityAgent=SSH_AUTH_SOCK -N -D 1080 root@destination.example"
+    );
+  });
+
+  it("includes app defaults for real UI hosts whose optional fields were omitted by JSON", () => {
+    expect(buildTunnelCliCommand({ type: "D", socksPort: 1080 }, sshHost("destination"), { shell: "posix", useAppDefaults: true })).toBe(
+      "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -o ServerAliveInterval=15 -N -D 1080 root@destination.example"
+    );
+  });
+
   it("keeps the default local listener visible in route labels", () => {
     expect(formatTunnelRoute({ type: "L", localPort: 8080, targetHost: "db.internal", targetPort: 3306 })).toBe(
       "127.0.0.1:8080 → db.internal:3306"

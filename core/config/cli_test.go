@@ -44,6 +44,51 @@ func TestParseSSHCommandDynamicAndJumps(t *testing.T) {
 	}
 }
 
+func TestParseSSHCommandAdvancedOptions(t *testing.T) {
+	spec, err := ParseSSHCommand([]string{
+		"-o", "stricthostkeychecking YES", "-oCONNECTTIMEOUT=30",
+		"-o", "ServerAliveInterval = 0", "-o", `UserKnownHostsFile="~/.ssh/my hosts"`,
+		"-o", `IdentityAgent="C:\\Users\\O'Brien\\my agent"`,
+		"-J", "gateway@jump.example", "-D1080", "root@target.example",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, jumps, _, err := SpecToSettingsWithJumps(spec)
+	if err != nil || host.HostKeyPolicy != HostKeyStrict || host.ConnectTimeoutSeconds != 30 || host.KeepaliveSeconds != -1 || host.KnownHostsFile != "~/.ssh/my hosts" || host.Auth.Method != AuthMethodAgent || host.Auth.AgentSocket != `C:\Users\O'Brien\my agent` {
+		t.Fatalf("advanced options were lost: host=%+v err=%v", host, err)
+	}
+	if len(jumps) != 1 || jumps[0].HostKeyPolicy != "" || jumps[0].ConnectTimeoutSeconds != 0 || jumps[0].KeepaliveSeconds != 0 || jumps[0].KnownHostsFile != "" || jumps[0].Auth.AgentSocket != "" {
+		t.Fatalf("destination-only options were incorrectly propagated to jumps: %+v", jumps)
+	}
+}
+
+func TestParseSSHCommandAdvancedOptionsFirstValueWins(t *testing.T) {
+	spec, err := ParseSSHCommand([]string{"-o", "ConnectTimeout=30", "-o", "connecttimeout=45", "-o", "StrictHostKeyChecking=accept-new", "-o", "stricthostkeychecking=yes", "root@host"})
+	if err != nil || spec.ConnectTimeoutSeconds != 30 || spec.HostKeyPolicy != HostKeyAcceptNew {
+		t.Fatalf("OpenSSH first-value semantics changed: spec=%+v err=%v", spec, err)
+	}
+}
+
+func TestParseSSHCommandRejectsUnsupportedAdvancedOptions(t *testing.T) {
+	for _, option := range []string{
+		"StrictHostKeyChecking=no", "StrictHostKeyChecking=off", "StrictHostKeyChecking=ask",
+		"ConnectTimeout=0", "ConnectTimeout=-1", "ConnectTimeout=301", "ConnectTimeout=bad",
+		"ServerAliveInterval=-1", "ServerAliveInterval=86401", "ServerAliveInterval=bad",
+		"UserKnownHostsFile=", "UserKnownHostsFile=/tmp/first /tmp/second", `IdentityAgent="unfinished`,
+		"IdentityAgent=none", "UserKnownHostsFile=none",
+	} {
+		t.Run(option, func(t *testing.T) {
+			if _, err := ParseSSHCommand([]string{"-o", option, "root@host"}); err == nil {
+				t.Fatal("unsupported option was silently accepted")
+			}
+		})
+	}
+	if _, err := ParseSSHCommand([]string{"-i", "/tmp/key", "-o", "IdentityAgent=/tmp/agent", "root@host"}); err == nil {
+		t.Fatal("mixed key and agent authentication was silently imported")
+	}
+}
+
 func TestSpecToSettingsWithJumpsPreservesProxyJumpTopology(t *testing.T) {
 	spec, err := ParseSSHCommand([]string{
 		"-i", "~/.ssh/id_ed25519",

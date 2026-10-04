@@ -25,7 +25,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.26.6"
 
       - uses: actions/setup-node@v4
         with:
@@ -35,6 +35,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm --prefix frontend ci
+
+      - name: Audit frontend dependencies
+        run: npm --prefix frontend audit
 
       - name: Check frontend types
         run: npm --prefix frontend run check
@@ -55,6 +58,9 @@ jobs:
 
       - name: Vet Go packages
         run: go vet -tags gtk3 ./...
+
+      - name: Check reachable Go vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -tags gtk3 ./...
 
       - name: Detect Go data races
         env:
@@ -99,7 +105,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.26.6"
 
       - uses: actions/setup-node@v4
         with:
@@ -122,7 +128,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
+          sudo apt-get install -y build-essential libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config xvfb dbus-x11
 
       - name: Install wails3 CLI
         env:
@@ -145,6 +151,35 @@ jobs:
           else
             wails3 task build VERSION="${{ steps.version.outputs.value }}"
           fi
+
+      - name: Verify GTK3 Debian package metadata
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          wails3 task linux:generate:deb EXTRA_TAGS=gtk3 ARCH=amd64
+          packages=(bin/*.deb)
+          test "${#packages[@]}" -eq 1
+          test "$(dpkg-deb --field "${packages[0]}" Architecture)" = amd64
+          deps="$(dpkg-deb --field "${packages[0]}" Depends)"
+          [[ "$deps" == *libgtk-3-0* && "$deps" == *libwebkit2gtk-4.1-0* ]]
+          [[ "$deps" != *libgtk-4-1* && "$deps" != *libwebkitgtk-6.0-4* ]]
+          dpkg-deb --extract "${packages[0]}" "$RUNNER_TEMP/sshnat-deb"
+          test -x "$RUNNER_TEMP/sshnat-deb/usr/local/bin/sshnat"
+
+      - name: Smoke test native Linux startup
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SSHNAT_CONFIG_DIR="$RUNNER_TEMP/sshnat-desktop-config"
+          mkdir -p "$SSHNAT_CONFIG_DIR"
+          # A virtual display checks native GTK/WebKit startup without requiring
+          # an interactive desktop. Timeout is the expected successful result.
+          result=0
+          timeout --signal=TERM 10s dbus-run-session -- xvfb-run -a bin/sshnat > "$RUNNER_TEMP/sshnat-startup.log" 2>&1 || result=$?
+          cat "$RUNNER_TEMP/sshnat-startup.log"
+          test "$result" -eq 124
 
       - name: Verify Windows executable metadata
         if: runner.os == 'Windows'
@@ -199,7 +234,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.26.6"
       - name: Cross compile
         run: |
           mkdir -p dist
@@ -253,7 +288,7 @@ jobs:
             if [ -d "$artifact" ]; then
               name="$(basename "$artifact")"
               cp LICENSE "$artifact/LICENSE"
-              cp README.md README_zh.md RELEASE_CHECKLIST.md "$artifact/"
+              cp README.md README_zh.md RELEASE_CHECKLIST.md CHANGELOG.md "$artifact/"
               # upload-artifact normalizes file modes to 0644. Restore Unix
               # executable bits before archiving runnable release packages.
               find "$artifact" -type f \( -name sshnat -o -name 'sshnatd-linux-*' -o -name 'sshnatd-darwin-*' \) -exec chmod +x {} +
@@ -271,7 +306,7 @@ jobs:
                   tar -xzf "$OUTPUT_DIR/${name}.tar.gz" -C "$verify_dir"
                   ;;
               esac
-              for document in LICENSE README.md README_zh.md RELEASE_CHECKLIST.md; do
+              for document in LICENSE README.md README_zh.md RELEASE_CHECKLIST.md CHANGELOG.md; do
                 test -s "$verify_dir/$document" || { echo "Missing document in $name: $document" >&2; exit 1; }
               done
               case "$name" in

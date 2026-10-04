@@ -72,6 +72,16 @@ beforeEach(async () => {
 afterEach(async () => { await unmount(component); document.body.innerHTML = ""; });
 
 describe("configuration transfer user actions", () => {
+  it("returns to idle without an error when the native save dialog is cancelled", async () => {
+    SettingsService.ExportFile.mockResolvedValueOnce("");
+    button("Save Configuration File").click();
+    await settle();
+    expect(SettingsService.ExportFile).toHaveBeenCalledWith(false);
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    expect(document.querySelector('[role="status"]')).toBeNull();
+    expect(button("Save Configuration File").disabled).toBe(false);
+  });
+
   it("clears committed input when a subsequent refresh fails, preventing accidental repeat imports", async () => {
     refreshTunnels.mockRejectedValueOnce(new Error("offline"));
     paste('{"version":1,"hosts":[],"tunnels":[]}');

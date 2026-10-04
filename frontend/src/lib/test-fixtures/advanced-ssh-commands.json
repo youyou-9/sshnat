@@ -1,0 +1,83 @@
+[
+  {
+    "shell": "posix",
+    "host": {
+      "user": "root",
+      "host": "destination.example",
+      "port": 22,
+      "auth": {
+        "method": "agent",
+        "agentSocket": "C:\\Users\\O'Brien\\my agent"
+      },
+      "hostKeyPolicy": "strict",
+      "connectTimeoutSeconds": 30,
+      "keepaliveSeconds": -1,
+      "knownHostsFile": "~/.ssh/o'brien hosts"
+    },
+    "tunnel": {
+      "type": "D",
+      "socksPort": 1080
+    },
+    "command": "ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=30 -o ServerAliveInterval=0 -o 'UserKnownHostsFile=\"~/.ssh/o'\\''brien hosts\"' -o 'IdentityAgent=\"C:\\\\Users\\\\O'\\''Brien\\\\my agent\"' -N -D 1080 root@destination.example",
+    "useAppDefaults": false
+  },
+  {
+    "shell": "powershell",
+    "host": {
+      "user": "root",
+      "host": "destination.example",
+      "port": 22,
+      "auth": {
+        "method": "agent",
+        "agentSocket": "C:\\Users\\O'Brien\\my agent"
+      },
+      "hostKeyPolicy": "strict",
+      "connectTimeoutSeconds": 30,
+      "keepaliveSeconds": -1,
+      "knownHostsFile": "~/.ssh/o'brien hosts"
+    },
+    "tunnel": {
+      "type": "D",
+      "socksPort": 1080
+    },
+    "command": "ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=30 -o ServerAliveInterval=0 -o 'UserKnownHostsFile=\"~/.ssh/o''brien hosts\"' -o 'IdentityAgent=\"C:\\\\Users\\\\O''Brien\\\\my agent\"' -N -D 1080 root@destination.example",
+    "useAppDefaults": false
+  },
+  {
+    "shell": "posix",
+    "host": {
+      "user": "alice",
+      "host": "defaults.example",
+      "port": 22,
+      "auth": {
+        "method": "password"
+      },
+      "hostKeyPolicy": "accept-new",
+      "connectTimeoutSeconds": 0,
+      "keepaliveSeconds": 0
+    },
+    "tunnel": {
+      "type": "D",
+      "socksPort": 1080
+    },
+    "command": "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -o ServerAliveInterval=15 -N -D 1080 alice@defaults.example",
+    "useAppDefaults": false
+  },
+  {
+    "shell": "powershell",
+    "host": {
+      "user": "alice",
+      "host": "omitted-defaults.example",
+      "port": 22,
+      "auth": {
+        "method": "agent"
+      }
+    },
+    "tunnel": {
+      "type": "D",
+      "socksPort": 1080
+    },
+    "useAppDefaults": true,
+    "command": "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -o ServerAliveInterval=15 -o IdentityAgent=SSH_AUTH_SOCK -N -D 1080 alice@omitted-defaults.example"
+  }
+]

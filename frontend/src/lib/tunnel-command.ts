@@ -17,7 +17,7 @@ export type TunnelCommandTunnel = Pick<
 >;
 
 export type TunnelCommandHost = Pick<Host, "user" | "host" | "port" | "auth"> &
-  Partial<Pick<Host, "id" | "jumpHostIds">>;
+  Partial<Pick<Host, "id" | "jumpHostIds" | "hostKeyPolicy" | "connectTimeoutSeconds" | "keepaliveSeconds" | "knownHostsFile">>;
 
 export type CommandShell = "posix" | "powershell";
 
@@ -26,6 +26,8 @@ export interface TunnelCommandOptions {
   hosts?: readonly Host[];
   /** Windows defaults to PowerShell; other platforms default to a POSIX shell. */
   shell?: CommandShell;
+  /** Include the app's defaults when formatting a real UI host. */
+  useAppDefaults?: boolean;
 }
 
 export function defaultCommandShell(): CommandShell {
@@ -103,6 +105,15 @@ function homePathArg(path: string, shell: CommandShell): string {
   return quoteArg(normalized, shell);
 }
 
+function sshOptionArg(name: string, setting: string, shell: CommandShell): string {
+  // -o is parsed by OpenSSH after the shell. Its own quotes are needed to
+  // preserve a single pathname containing spaces, quotes or backslashes.
+  const configValue = /[\s"'\\]/.test(setting)
+    ? `"${setting.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+    : setting;
+  return quoteArg(`${name}=${configValue}`, shell);
+}
+
 function destinationHost(host: string): string {
   const normalized = value(host) || "host";
   return normalized.startsWith("[") && normalized.endsWith("]") ? normalized.slice(1, -1) : normalized;
@@ -149,6 +160,23 @@ export function buildTunnelCliCommand(
   const authMethod = host?.auth?.method || "password";
   const keyPath = value(host?.auth?.keyPath);
   if (authMethod === "key" && keyPath) parts.push("-i", homePathArg(keyPath, shell));
+
+  const option = (name: string, setting: string) => parts.push("-o", sshOptionArg(name, setting, shell));
+  const policy = host?.hostKeyPolicy ?? (options.useAppDefaults ? "accept-new" : undefined);
+  if (policy === "strict") option("StrictHostKeyChecking", "yes");
+  if (policy === "accept-new" || policy === "") option("StrictHostKeyChecking", "accept-new");
+  const timeout = host?.connectTimeoutSeconds ?? (options.useAppDefaults ? 0 : undefined);
+  if (timeout !== undefined && Number.isInteger(timeout) && timeout >= 0 && timeout <= 300) {
+    option("ConnectTimeout", String(timeout || 15));
+  }
+  const keepalive = host?.keepaliveSeconds ?? (options.useAppDefaults ? 0 : undefined);
+  if (keepalive !== undefined && Number.isInteger(keepalive) && keepalive >= -1 && keepalive <= 86400) {
+    option("ServerAliveInterval", String(keepalive === -1 ? 0 : keepalive || 15));
+  }
+  const knownHostsFile = value(host?.knownHostsFile);
+  if (knownHostsFile) option("UserKnownHostsFile", knownHostsFile);
+  const agentSocket = value(host?.auth?.agentSocket);
+  if (authMethod === "agent") option("IdentityAgent", agentSocket || "SSH_AUTH_SOCK");
 
   const port = host?.port ?? 22;
   if (port && port !== 22) parts.push("-p", String(port));

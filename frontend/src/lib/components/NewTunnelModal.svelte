@@ -104,15 +104,15 @@
       socksPort: Number(socksPort) || 1080,
     };
     const previewHost = hostObj
-      ? { ...hostObj, auth: showEditAuth ? { method: hAuth, keyPath: hKeyPath.trim() } : hostObj.auth }
+      ? { ...hostObj, auth: showEditAuth ? { method: hAuth, keyPath: hKeyPath.trim(), agentSocket: hAgentSocket.trim() } : hostObj.auth }
       : {
           user: hUser.trim() || "root",
           host: hAddr.trim() || "host",
           port: Number(hPort) || 22,
-          auth: { method: hAuth, keyPath: hKeyPath.trim() },
+          auth: { method: hAuth, keyPath: hKeyPath.trim(), agentSocket: hAgentSocket.trim() },
         };
     try {
-      return { command: buildTunnelCliCommand(previewTunnel, previewHost, { hosts: app.hosts, shell: commandShell }), error: "" };
+      return { command: buildTunnelCliCommand(previewTunnel, previewHost, { hosts: app.hosts, shell: commandShell, useAppDefaults: true }), error: "" };
     } catch (previewError) {
       return { command: "", error: String(previewError instanceof Error ? previewError.message : previewError) };
     }

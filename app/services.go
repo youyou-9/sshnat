@@ -21,9 +21,10 @@ import (
 
 // Wails 事件名。
 const (
-	EventTunnelStatus = "sshnat:tunnel-status"
-	EventTunnelStats  = "sshnat:tunnel-stats"
-	EventLog          = "sshnat:log"
+	EventTunnelStatus  = "sshnat:tunnel-status"
+	EventTunnelStats   = "sshnat:tunnel-stats"
+	EventLog           = "sshnat:log"
+	EventConfigChanged = "sshnat:config-changed"
 )
 
 // Emitter 由 main 装配：把 core 事件转发到前端。
@@ -94,7 +95,8 @@ type Services struct {
 	emu          sync.RWMutex
 	chooseExport func() (string, error)
 
-	tmu sync.Mutex // 保护配置文件读写串行化
+	tmu     sync.Mutex // 保护配置文件读写串行化
+	closing bool       // also protected by tmu; shutdown rejects queued starts
 }
 
 // TunnelService 暴露隧道 CRUD 与启停。
@@ -218,6 +220,7 @@ func (t *TunnelService) Create(req CreateTunnelRequest) (*TunnelView, error) {
 
 	view := t.view(&tun)
 	log.Printf("[app] tunnel created: %s (%s)", tun.ID, tun.Name)
+	t.s.emitConfigChanged()
 	return view, nil
 }
 
@@ -246,7 +249,13 @@ func (t *TunnelService) Update(req UpdateTunnelRequest) (*TunnelView, error) {
 	// Validate the target tunnel and host before stopping a running tunnel.
 	// A typo in an update request must not stop a healthy tunnel first.
 	t.s.tmu.Lock()
-	defer t.s.tmu.Unlock()
+	changed := false
+	defer func() {
+		t.s.tmu.Unlock()
+		if changed {
+			t.s.emitConfigChanged()
+		}
+	}()
 	currentSettings, err := t.s.Store.Load()
 	if err != nil {
 		return nil, err
@@ -310,6 +319,7 @@ func (t *TunnelService) Update(req UpdateTunnelRequest) (*TunnelView, error) {
 	if err != nil {
 		return nil, err
 	}
+	changed = true
 
 	if wasRunning {
 		if err := t.s.Sup.Start(req.ID); err != nil {
@@ -369,13 +379,14 @@ func (t *TunnelService) CreateFromSSHCommandForShell(cmd, shell string) ([]Tunne
 	// 同名主机复用，避免重复条目。
 	if existing, ok := findHostByAddr(settings, host.Host, host.Port, host.User); ok {
 		*host = existing
+		spec.ApplyHostOptions(host)
 		if len(jumpIDs) > 0 {
 			host.JumpHostIDs = jumpIDs
-			for i := range settings.Hosts {
-				if settings.Hosts[i].ID == host.ID {
-					settings.Hosts[i].JumpHostIDs = jumpIDs
-					break
-				}
+		}
+		for i := range settings.Hosts {
+			if settings.Hosts[i].ID == host.ID {
+				settings.Hosts[i] = *host
+				break
 			}
 		}
 	} else {
@@ -395,6 +406,7 @@ func (t *TunnelService) CreateFromSSHCommandForShell(cmd, shell string) ([]Tunne
 	for i := range tunnels {
 		views = append(views, *t.view(&tunnels[i]))
 	}
+	t.s.emitConfigChanged()
 	return views, nil
 }
 
@@ -428,6 +440,9 @@ func (t *TunnelService) Get(id string) (*TunnelView, error) {
 func (t *TunnelService) Start(id string) error {
 	t.s.tmu.Lock()
 	defer t.s.tmu.Unlock()
+	if t.s.closing {
+		return errors.New("application is shutting down")
+	}
 	return t.s.Sup.Start(id)
 }
 
@@ -437,7 +452,13 @@ func (t *TunnelService) Stop(id string) error { return t.s.Sup.Stop(id) }
 // Delete 删除隧道（运行中会先停止）。
 func (t *TunnelService) Delete(id string) error {
 	t.s.tmu.Lock()
-	defer t.s.tmu.Unlock()
+	changed := false
+	defer func() {
+		t.s.tmu.Unlock()
+		if changed {
+			t.s.emitConfigChanged()
+		}
+	}()
 	if t.s.Sup.HasActiveRun(id) {
 		if err := t.s.Sup.Stop(id); err != nil && !errors.Is(err, supervisor.ErrNotRunning) {
 			return err
@@ -464,6 +485,7 @@ func (t *TunnelService) Delete(id string) error {
 		return err
 	}
 	t.s.Stats.Delete(id)
+	changed = true
 	return nil
 }
 
@@ -633,7 +655,13 @@ func (h *HostService) Save(host config.Host) error {
 		return errors.New("host port must be between 1 and 65535")
 	}
 	h.s.tmu.Lock()
-	defer h.s.tmu.Unlock()
+	changed := false
+	defer func() {
+		h.s.tmu.Unlock()
+		if changed {
+			h.s.emitConfigChanged()
+		}
+	}()
 	settings, err := h.s.Store.Load()
 	if err != nil {
 		return err
@@ -660,7 +688,9 @@ func (h *HostService) Save(host config.Host) error {
 			return err
 		}
 	}
-	return h.s.Store.Save(settings)
+	err = h.s.Store.Save(settings)
+	changed = err == nil
+	return err
 }
 
 // Delete 删除主机（引用它的隧道一并删除）。
@@ -668,7 +698,13 @@ func (h *HostService) Delete(id string) error {
 	// Stop matching runtime tunnels before removing their configuration. This
 	// prevents an orphaned listener from surviving a host deletion.
 	h.s.tmu.Lock()
-	defer h.s.tmu.Unlock()
+	changed := false
+	defer func() {
+		h.s.tmu.Unlock()
+		if changed {
+			h.s.emitConfigChanged()
+		}
+	}()
 	settings, err := h.s.Store.Load()
 	if err != nil {
 		return err
@@ -726,6 +762,7 @@ func (h *HostService) Delete(id string) error {
 	for _, tunnelID := range tunnelIDs {
 		h.s.Stats.Delete(tunnelID)
 	}
+	changed = true
 	return nil
 }
 

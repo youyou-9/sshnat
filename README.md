@@ -6,7 +6,7 @@
 *现代轻量级 SSH 端口转发客户端与无头后台守护进程*
 
 [![Build Status](https://github.com/youyou-9/sshnat/actions/workflows/build.yml/badge.svg)](https://github.com/youyou-9/sshnat/actions/workflows/build.yml)
-[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)]()
+[![Go Version](https://img.shields.io/badge/Go-1.26.6+-00ADD8?logo=go)]()
 [![Wails Version](https://img.shields.io/badge/Wails-v3.0.0--beta.11-DF0000?logo=wails)]()
 [![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)]()
@@ -49,8 +49,8 @@
 - **Resilient Lifecycle Management**:
   - Native OpenSSH keepalive probing and exponential backoff auto-reconnection.
   - Bidirectional stream co-termination preventing orphan socket and file descriptor leaks.
-- **Bi-directional OpenSSH CLI Parity**:
-  - Paste any standard OpenSSH command line (`ssh -L ... -i ... -p ... user@host`) for instant import.
+- **OpenSSH Command Import and Copy**:
+  - Paste supported OpenSSH forwarding commands (`ssh -L ... -i ... -p ... user@host`) for instant import.
   - Automatically synthesizes compliant, copy-ready OpenSSH commands with proper escaping.
 - **Real-Time Telemetry & Granular Diagnostics**:
   - Real-time TX/RX speeds, cumulative bandwidth counters, and 60-point SVG Sparkline charts.
@@ -96,7 +96,8 @@ sshnat/
 ### 🚀 Quick Start & Building
 
 #### Prerequisites
-- **Go**: 1.25+
+- **Go**: 1.26.6+ (includes the security fixes required by the release checks)
+  - For optional obfuscated builds, install Go 1.26.6 directly from [go.dev/dl](https://go.dev/dl/). Garble cannot patch an automatically downloaded toolchain inside Go's module cache.
 - **Node.js**: 24.15+ & npm (the locked Vite/Vitest/jsdom toolchain requires Node 24.15+)
 - **Wails 3 CLI**:
   ```bash
@@ -131,6 +132,10 @@ sudo dnf install -y gtk4-devel webkitgtk6.0-devel
 The default renderer needs GTK 4.14+. For a distribution with GTK3/WebKitGTK
 4.1, install its development packages and build with
 `wails3 task build EXTRA_TAGS=gtk3` (the compatibility renderer in Wails 3.0).
+Use the same `EXTRA_TAGS=gtk3` when creating Linux packages, for example
+`wails3 task linux:create:deb EXTRA_TAGS=gtk3 VERSION=1.0.0`. The deb/rpm/Arch
+tasks automatically select the matching runtime dependencies and preserve
+the binary's executable permissions.
 
 #### Building Headless Daemon
 ```bash
@@ -208,6 +213,23 @@ New and existing configurations default to `accept-new` when `hostKeyPolicy`
 is omitted. Before using `strict`, provision the selected known-hosts file
 with the server's verified public key. A failed test reports the handshake or
 host key error without changing the policy.
+
+Copied commands include the destination's host key policy, connection timeout,
+keepalive, explicit known-hosts path and agent socket through `-o`. Import accepts
+case-insensitive option names and both `Name=value` and quoted `Name value` forms.
+`ServerAliveInterval=0` maps to the app's disabled keepalive (`-1`); app defaults
+(`0` or omitted) copy as 15 seconds. Import rejects `StrictHostKeyChecking=no/off/ask`,
+unlimited `ConnectTimeout=0`, multiple known-hosts files, and combined `-i` plus
+`IdentityAgent`, because these settings cannot be represented by the app.
+
+An empty known-hosts path uses `known_hosts` beside the active `config.json` in
+SSHNat, while OpenSSH uses its own default `~/.ssh/known_hosts`. Set an explicit
+path in the host settings to reuse the same trusted fingerprints in copied
+commands. `-J` carries jump addresses, users and ports; it cannot carry each
+jump's independent keys, agent sockets, host key policies or timeouts. Configure
+these per jump in your OpenSSH config before running a copied multi-hop command.
+SSH config files supplied with `-F` are not loaded by command import. Use a full
+configuration backup for transferring all app settings and saved credentials.
 
 ---
 

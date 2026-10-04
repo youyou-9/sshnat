@@ -16,6 +16,7 @@ var metadataFixtures = map[string]string{
 	"build/windows/msix/app_manifest.xml": `<Identity Name="com.sshnat.app" Version="1.0.0.0" ProcessorArchitecture="x64" />`,
 	"build/windows/nsis/wails_tools.nsh":  `!define INFO_PRODUCTVERSION "1.0.0"`,
 	"build/linux/nfpm/nfpm.yaml":          `version: "1.0.0"`,
+	"build/linux/nfpm/nfpm-gtk3.yaml":     `version: "1.0.0"`,
 }
 
 func seedMetadata(t *testing.T) string {

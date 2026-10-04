@@ -15,6 +15,13 @@ type SSHSpec struct {
 	KeyPath  string   // -i
 	Jumps    []string // -J user@host:port,逗号分隔多级
 
+	HostKeyPolicy         string
+	ConnectTimeoutSeconds int
+	KeepaliveSeconds      int
+	KnownHostsFile        string
+	AgentSocket           string
+	options               map[string]bool // first explicit -o value wins, as in OpenSSH
+
 	Forwards []ForwardSpec
 }
 
@@ -37,7 +44,7 @@ type ForwardSpec struct {
 //
 // 的参数列表（不含 argv[0]）。支持 -N/-v 等无参开关的忽略。
 func ParseSSHCommand(args []string) (*SSHSpec, error) {
-	spec := &SSHSpec{}
+	spec := &SSHSpec{options: make(map[string]bool)}
 	if len(args) > 0 && isSSHProgram(args[0]) {
 		args = args[1:]
 	}
@@ -103,8 +110,12 @@ func ParseSSHCommand(args []string) (*SSHSpec, error) {
 					return nil, perr
 				}
 				spec.Forwards = append(spec.Forwards, *fw)
+			case "-o":
+				if err := spec.parseOption(val); err != nil {
+					return nil, err
+				}
 			default:
-				// -F / -o：本期忽略。
+				// -F cannot be resolved without reading a separate SSH config.
 			}
 		case boolIgnore[arg]:
 			i++
@@ -128,7 +139,136 @@ func ParseSSHCommand(args []string) (*SSHSpec, error) {
 	if spec.Hostname == "" {
 		return nil, fmt.Errorf("config: no destination host found")
 	}
+	if spec.KeyPath != "" && spec.options["identityagent"] {
+		return nil, fmt.Errorf("config: combining -i and IdentityAgent is unsupported; choose key or agent authentication")
+	}
 	return spec, nil
+}
+
+func (spec *SSHSpec) parseOption(raw string) error {
+	raw = strings.TrimSpace(raw)
+	end := strings.IndexAny(raw, "= \t")
+	name, setting := raw, ""
+	if end >= 0 {
+		name = raw[:end]
+		setting = strings.TrimSpace(raw[end:])
+		setting = strings.TrimSpace(strings.TrimPrefix(setting, "="))
+	}
+	name = strings.ToLower(name)
+	switch name {
+	case "stricthostkeychecking", "connecttimeout", "serveraliveinterval", "userknownhostsfile", "identityagent":
+	default:
+		return nil // Other OpenSSH options do not have a corresponding app setting.
+	}
+	if spec.options[name] {
+		return nil
+	}
+	setting, err := sshOptionValue(setting)
+	if err != nil {
+		return fmt.Errorf("config: invalid %s: %w", name, err)
+	}
+	switch name {
+	case "stricthostkeychecking":
+		switch strings.ToLower(setting) {
+		case "yes", "true":
+			spec.HostKeyPolicy = HostKeyStrict
+		case "accept-new":
+			spec.HostKeyPolicy = HostKeyAcceptNew
+		default:
+			return fmt.Errorf("config: StrictHostKeyChecking must be yes or accept-new; insecure or interactive policies are unsupported")
+		}
+	case "connecttimeout":
+		seconds, err := strconv.Atoi(setting)
+		if err != nil || seconds < 1 || seconds > 300 {
+			return fmt.Errorf("config: ConnectTimeout must be between 1 and 300 seconds")
+		}
+		spec.ConnectTimeoutSeconds = seconds
+	case "serveraliveinterval":
+		seconds, err := strconv.Atoi(setting)
+		if err != nil || seconds < 0 || seconds > 86400 {
+			return fmt.Errorf("config: ServerAliveInterval must be between 0 and 86400 seconds")
+		}
+		if seconds == 0 {
+			seconds = -1 // The app's zero means its 15-second default.
+		}
+		spec.KeepaliveSeconds = seconds
+	case "userknownhostsfile":
+		if strings.EqualFold(setting, "none") {
+			return fmt.Errorf("config: UserKnownHostsFile=none is unsupported")
+		}
+		spec.KnownHostsFile = setting
+	case "identityagent":
+		if strings.EqualFold(setting, "none") {
+			return fmt.Errorf("config: IdentityAgent=none is unsupported")
+		}
+		if setting == "SSH_AUTH_SOCK" {
+			setting = "" // Use the system's default agent, as OpenSSH does.
+		}
+		spec.AgentSocket = setting
+	}
+	spec.options[name] = true
+	return nil
+}
+
+// sshOptionValue reads one OpenSSH config value after shell quoting has been
+// removed. Keep ordinary Windows backslashes; only escaped quotes and escaped
+// backslashes inside a quoted config value need decoding.
+func sshOptionValue(setting string) (string, error) {
+	setting = strings.TrimSpace(setting)
+	if setting == "" {
+		return "", fmt.Errorf("a value is required")
+	}
+	if setting[0] != '"' && setting[0] != '\'' {
+		if strings.ContainsAny(setting, " \t\r\n\x00") {
+			return "", fmt.Errorf("only one value is supported; quote a pathname containing spaces")
+		}
+		return setting, nil
+	}
+	quote := setting[0]
+	var result strings.Builder
+	for i := 1; i < len(setting); i++ {
+		if setting[i] == quote {
+			if strings.TrimSpace(setting[i+1:]) != "" || result.Len() == 0 {
+				return "", fmt.Errorf("only one nonempty value is supported")
+			}
+			return result.String(), nil
+		}
+		if setting[i] == '\\' && i+1 < len(setting) && (setting[i+1] == quote || setting[i+1] == '\\') {
+			i++
+		}
+		if setting[i] == 0 || setting[i] == '\r' || setting[i] == '\n' {
+			return "", fmt.Errorf("a value must not contain NUL or line breaks")
+		}
+		result.WriteByte(setting[i])
+	}
+	return "", fmt.Errorf("unterminated quoted value")
+}
+
+// ApplyHostOptions applies only options explicitly present in the command so
+// importing another tunnel for an existing host preserves omitted settings.
+func (spec *SSHSpec) ApplyHostOptions(host *Host) {
+	if spec.KeyPath != "" {
+		passphrase := ""
+		if host.Auth.Method == AuthMethodKey && host.Auth.KeyPath == spec.KeyPath {
+			passphrase = host.Auth.KeyPassphrase
+		}
+		host.Auth = AuthConfig{Method: AuthMethodKey, KeyPath: spec.KeyPath, KeyPassphrase: passphrase}
+	}
+	if spec.HostKeyPolicy != "" {
+		host.HostKeyPolicy = spec.HostKeyPolicy
+	}
+	if spec.ConnectTimeoutSeconds != 0 {
+		host.ConnectTimeoutSeconds = spec.ConnectTimeoutSeconds
+	}
+	if spec.KeepaliveSeconds != 0 {
+		host.KeepaliveSeconds = spec.KeepaliveSeconds
+	}
+	if spec.KnownHostsFile != "" {
+		host.KnownHostsFile = spec.KnownHostsFile
+	}
+	if spec.options["identityagent"] || spec.AgentSocket != "" {
+		host.Auth = AuthConfig{Method: AuthMethodAgent, AgentSocket: spec.AgentSocket}
+	}
 }
 
 // splitAttachedOption recognizes OpenSSH's compact single-letter value flags.
@@ -334,6 +474,7 @@ func SpecToSettingsWithJumps(spec *SSHSpec) (*Host, []Host, []Tunnel, error) {
 		host.Auth.Method = AuthMethodKey
 		host.Auth.KeyPath = spec.KeyPath
 	}
+	spec.ApplyHostOptions(host)
 
 	jumpHosts := make([]Host, 0, len(spec.Jumps))
 	for _, raw := range spec.Jumps {

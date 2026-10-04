@@ -93,7 +93,13 @@ func (st *SettingsService) Import(document, mode string) (*ConfigImportResult, e
 		return nil, err
 	}
 	st.s.tmu.Lock()
-	defer st.s.tmu.Unlock()
+	changed := false
+	defer func() {
+		st.s.tmu.Unlock()
+		if changed {
+			st.s.emitConfigChanged()
+		}
+	}()
 	current, err := st.s.Store.Load()
 	if err != nil {
 		return nil, err
@@ -136,6 +142,7 @@ func (st *SettingsService) Import(document, mode string) (*ConfigImportResult, e
 	if err := st.s.Store.Save(incoming); err != nil {
 		return nil, err
 	}
+	changed = true
 	if mode == "replace" {
 		for _, tunnel := range current.Tunnels {
 			st.s.Stats.Delete(tunnel.ID)

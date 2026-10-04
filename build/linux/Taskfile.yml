@@ -56,7 +56,7 @@ tasks:
       - task: generate:dotdesktop
     preconditions:
       - sh: '{{if eq .OBFUSCATED "true"}}command -v garble >/dev/null 2>&1{{else}}true{{end}}'
-        msg: "garble is required for obfuscated builds. Install it with: go install mvdan.cc/garble@v0.16.0 (requires Go 1.24+). See https://github.com/burrowers/garble/releases for version/toolchain compatibility."
+        msg: "garble is required for obfuscated builds. Install it with: go install mvdan.cc/garble@v0.16.0 (requires Go 1.26+). See https://github.com/burrowers/garble/releases for version/toolchain compatibility."
     cmds:
       - '{{if eq .OBFUSCATED "true"}}garble {{.GARBLE_ARGS}} build{{else}}go build{{end}} {{.BUILD_FLAGS}} -o {{.OUTPUT}}'
     vars:
@@ -154,24 +154,41 @@ tasks:
 
   generate:deb:
     summary: Creates a deb package
+    deps:
+      - task: generate:dotdesktop
+    vars:
+      NFPM_CONFIG: '{{if regexMatch "(^|[, ])gtk3($|[, ])" (.EXTRA_TAGS | default "")}}./build/linux/nfpm/nfpm-gtk3.yaml{{else}}./build/linux/nfpm/nfpm.yaml{{end}}'
+    env:
+      GOARCH: '{{.ARCH | default ARCH}}'
     cmds:
-      - wails3 tool package -name "{{.APP_NAME}}" -format deb -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/bin
+      - wails3 tool package -name "{{.APP_NAME}}" -format deb -config "{{.NFPM_CONFIG}}" -out "{{.ROOT_DIR}}/bin"
 
   generate:rpm:
     summary: Creates a rpm package
+    deps:
+      - task: generate:dotdesktop
+    vars:
+      NFPM_CONFIG: '{{if regexMatch "(^|[, ])gtk3($|[, ])" (.EXTRA_TAGS | default "")}}./build/linux/nfpm/nfpm-gtk3.yaml{{else}}./build/linux/nfpm/nfpm.yaml{{end}}'
+    env:
+      GOARCH: '{{.ARCH | default ARCH}}'
     cmds:
-      - wails3 tool package -name "{{.APP_NAME}}" -format rpm -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/bin
+      - wails3 tool package -name "{{.APP_NAME}}" -format rpm -config "{{.NFPM_CONFIG}}" -out "{{.ROOT_DIR}}/bin"
 
   generate:aur:
     summary: Creates a arch linux packager package
+    deps:
+      - task: generate:dotdesktop
+    vars:
+      NFPM_CONFIG: '{{if regexMatch "(^|[, ])gtk3($|[, ])" (.EXTRA_TAGS | default "")}}./build/linux/nfpm/nfpm-gtk3.yaml{{else}}./build/linux/nfpm/nfpm.yaml{{end}}'
+    env:
+      GOARCH: '{{.ARCH | default ARCH}}'
     cmds:
-      - wails3 tool package -name "{{.APP_NAME}}" -format archlinux -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/bin
+      - wails3 tool package -name "{{.APP_NAME}}" -format archlinux -config "{{.NFPM_CONFIG}}" -out "{{.ROOT_DIR}}/bin"
 
   generate:dotdesktop:
     summary: Generates a `.desktop` file
     dir: build
     cmds:
-      - mkdir -p {{.ROOT_DIR}}/build/linux/appimage
       - wails3 generate .desktop -name "{{.APP_NAME}}" -exec "{{.EXEC}}" -icon "{{.ICON}}" -outputfile "{{.ROOT_DIR}}/build/linux/{{.APP_NAME}}.desktop" -categories "{{.CATEGORIES}}"
     vars:
       APP_NAME: '{{.APP_NAME}}'

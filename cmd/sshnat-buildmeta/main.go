@@ -57,6 +57,7 @@ func syncMetadata(root, version string) error {
 		{"build/windows/msix/app_manifest.xml", regexp.MustCompile(`(?s)(<Identity\s+[^>]*Version=")[^"]+("[^>]*>)`), "${1}" + numeric + ".0${2}"},
 		{"build/windows/nsis/wails_tools.nsh", regexp.MustCompile(`(?m)(!define INFO_PRODUCTVERSION ")[^"]+(")`), "${1}" + numeric + "${2}"},
 		{"build/linux/nfpm/nfpm.yaml", regexp.MustCompile(`(?m)^(version: ")[^"]+(".*)$`), "${1}" + numeric + "${2}"},
+		{"build/linux/nfpm/nfpm-gtk3.yaml", regexp.MustCompile(`(?m)^(version: ")[^"]+(".*)$`), "${1}" + numeric + "${2}"},
 	}
 	// Prepare every update first. A missing/stale template must fail the build
 	// before any file is modified or a release artifact is produced.

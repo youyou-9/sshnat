@@ -108,7 +108,7 @@
   async function copyCli(tunnel: Tunnel) {
     const host = app.hosts.find((h) => h.id === tunnel.hostId);
     try {
-      if (await copyText(buildTunnelCliCommand(tunnel, host, { hosts: app.hosts }))) {
+      if (await copyText(buildTunnelCliCommand(tunnel, host, { hosts: app.hosts, useAppDefaults: true }))) {
         copiedId = tunnel.id;
         setTimeout(() => (copiedId = null), 1500);
       } else actionError = t(app.language, "tunnel.copyError");

@@ -6,7 +6,7 @@
 *A Modern Lightweight SSH Port Forwarding Desktop Client & Headless Daemon*
 
 [![Build Status](https://github.com/youyou-9/sshnat/actions/workflows/build.yml/badge.svg)](https://github.com/youyou-9/sshnat/actions/workflows/build.yml)
-[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)]()
+[![Go Version](https://img.shields.io/badge/Go-1.26.6+-00ADD8?logo=go)]()
 [![Wails Version](https://img.shields.io/badge/Wails-v3.0.0--beta.11-DF0000?logo=wails)]()
 [![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)]()
@@ -49,9 +49,9 @@
 - **高韧性生命周期管理**：
   - 原生支持 OpenSSH Keepalive 探测与指数退避（Exponential Backoff）自愈自动重连。
   - 双向数据流协同关闭，杜绝半开连接（Half-Close）与孤儿套接字泄漏。
-- **双向 OpenSSH CLI 命令互通**：
+- **OpenSSH 命令导入与复制**：
   - 支持直接粘贴标准 OpenSSH 命令行（`ssh -L ... -i ... -p ... user@host`）一键解析导入。
-  - 自动根据当前隧道与主机凭据生成规范且可一键复制的完整 OpenSSH 命令。
+  - 根据当前隧道与主机设置生成带正确引号且可一键复制的 OpenSSH 命令。
 - **实时指标与精细流式排错**：
   - 双向瞬时速率、累计吞吐量及 60 点 Sparkline 实时折线图。
   - 详细的连接握手、目标拨号与拒绝原因（如 Connection Refused、Timeout）实时流式日志。
@@ -96,7 +96,8 @@ sshnat/
 ### 🚀 快速开始与构建
 
 #### 系统环境依赖
-- **Go**：1.25+
+- **Go**：1.26.6+（包含发行检查要求的安全修复）
+  - 可选的混淆构建需从 [go.dev/dl](https://go.dev/dl/) 直接安装 Go 1.26.6；Garble 无法修补 Go 模块缓存中自动下载的工具链。
 - **Node.js**：24.15+ 与 npm（锁定的 Vite/Vitest/jsdom 工具链要求 Node 24.15+）
 - **Wails 3 CLI**：
   ```bash
@@ -130,6 +131,9 @@ sudo dnf install -y gtk4-devel webkitgtk6.0-devel
 ```
 默认渲染器要求 GTK 4.14+。如发行版仅提供 GTK3/WebKitGTK 4.1，可安装对应开发包并使用
 `wails3 task build EXTRA_TAGS=gtk3`（Wails 3.0 的兼容渲染器）。
+创建 Linux 安装包时也应使用相同的 `EXTRA_TAGS=gtk3`，例如
+`wails3 task linux:create:deb EXTRA_TAGS=gtk3 VERSION=1.0.0`。
+deb/rpm/Arch 打包任务会自动选择匹配的运行时依赖，并保留二进制的执行权限。
 
 #### 构建无头守护进程
 适用于无界面服务器或容器环境：
@@ -200,6 +204,18 @@ SSHNat 支持零侵入的便携模式：
 
 省略 `hostKeyPolicy` 的新旧配置均默认使用 `accept-new`。使用 `strict` 前，需将经过核实的
 服务器公钥放入指定的已知主机文件。测试失败会显示握手或主机密钥错误，并保留当前策略。
+
+复制的命令通过 `-o` 保留目标主机的密钥策略、连接超时、Keepalive、明确指定的已知主机文件和
+Agent socket。导入时选项名不区分大小写，支持 `Name=value` 和带引号的 `Name value`。
+`ServerAliveInterval=0` 对应应用中关闭 Keepalive 的 `-1`；应用默认值 `0` 或省略时，
+复制为 15 秒。导入会拒绝 `StrictHostKeyChecking=no/off/ask`、无期限的 `ConnectTimeout=0`、
+多个已知主机文件以及 `-i` 与 `IdentityAgent` 混用，因为应用无法表达这些设置。
+
+应用中已知主机路径留空时使用当前 `config.json` 同目录的 `known_hosts`，OpenSSH 则使用
+自己的默认 `~/.ssh/known_hosts`。要让复制的命令复用应用中已信任的指纹，请在主机设置中
+明确填写同一个文件路径。`-J` 只能携带跳板地址、用户和端口，无法携带每个跳板独立的密钥、
+Agent socket、密钥策略或超时；运行复制的多跳命令前，需在 OpenSSH config 中配置各跳板。
+命令导入不会读取 `-F` 指定的 SSH config 文件。迁移全部应用设置和已保存凭据时，请使用完整配置备份。
 
 ---
 
