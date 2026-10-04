@@ -5,7 +5,7 @@
 **A Modern Lightweight SSH Port Forwarding Desktop Client & Headless Daemon**  
 *现代轻量级 SSH 端口转发客户端与无头后台守护进程*
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
+[![Build Status](https://github.com/youyou-9/sshnat/actions/workflows/build.yml/badge.svg)](https://github.com/youyou-9/sshnat/actions/workflows/build.yml)
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)]()
 [![Wails Version](https://img.shields.io/badge/Wails-v3.0.0--beta.11-DF0000?logo=wails)]()
 [![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)]()
@@ -26,6 +26,7 @@
   - [Building Desktop App](#building-desktop-app)
   - [Building Headless Daemon](#building-headless-daemon)
 - [📁 Portable Mode & Config Layout](#-portable-mode--config-layout)
+- [🔐 Advanced Host Settings](#-advanced-host-settings)
 - [🖥️ System Tray Capabilities](#-system-tray-capabilities)
 - [🧪 Testing & Quality Gate](#-testing--quality-gate)
 - [📄 License](#-license)
@@ -96,10 +97,10 @@ sshnat/
 
 #### Prerequisites
 - **Go**: 1.25+
-- **Node.js**: 18+ & npm
+- **Node.js**: 24.15+ & npm (the locked Vite/Vitest/jsdom toolchain requires Node 24.15+)
 - **Wails 3 CLI**:
   ```bash
-  go install github.com/wailsapp/wails/v3/cmd/wails3@latest
+  go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.11
   ```
 
 #### Building Desktop App
@@ -109,7 +110,7 @@ git clone https://github.com/youyou-9/sshnat.git
 cd sshnat
 
 # 2. Install frontend dependencies
-cd frontend && npm install && cd ..
+cd frontend && npm ci && cd ..
 
 # 3. Live development mode
 wails3 task dev
@@ -121,21 +122,63 @@ The output binary will be generated under `bin/` (`bin/sshnat.exe` on Windows).
 
 *Note for Linux builds:*
 ```bash
-# Debian / Ubuntu
-sudo apt install -y build-essential libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
+# Debian 13+ / Ubuntu 24.04+ (default GTK4 renderer)
+sudo apt install -y build-essential libgtk-4-dev libwebkitgtk-6.0-dev pkg-config
 
 # Fedora / RHEL
-sudo dnf install -y gtk3-devel webkit2gtk4.1-devel
+sudo dnf install -y gtk4-devel webkitgtk6.0-devel
 ```
+The default renderer needs GTK 4.14+. For a distribution with GTK3/WebKitGTK
+4.1, install its development packages and build with
+`wails3 task build EXTRA_TAGS=gtk3` (the compatibility renderer in Wails 3.0).
 
 #### Building Headless Daemon
 ```bash
+# Local builds are labelled "dev" in the About panel and window title.
 go build -o bin/sshnatd ./cmd/sshnatd
+
+# Build all release daemon targets with a display version (requires Taskfile)
+wails3 task daemon:all VERSION=1.0.0
 ```
 Run all configured tunnels:
 ```bash
 ./bin/sshnatd -config ./config.json -all
 ```
+Check the installed daemon version without reading a configuration file:
+```bash
+./bin/sshnatd -version
+```
+Validate a configuration without opening any network connection:
+```bash
+./bin/sshnatd -config ./config.json -check
+```
+`-check` returns nonzero for missing files, unsupported fields, invalid hosts
+or tunnels, broken references, and ProxyJump cycles. It accepts a valid empty
+configuration; normal daemon startup requires at least one selected tunnel.
+
+Build a minimal container image (the image contains only `sshnatd`, without a
+GUI or HTTP listener):
+```bash
+wails3 task common:build:docker TAG=sshnat:1.0.0 VERSION=1.0.0
+docker run --rm \
+  --mount "type=bind,source=$PWD/sshnat-config,target=/config" \
+  sshnat:1.0.0 -config /config/config.json -all
+```
+
+Put `config.json` in the mounted directory; `known_hosts` entries are also kept
+there across restarts. Private-key paths in the config must point to files
+available inside the container. To expose a local TCP/SOCKS listener through
+Docker's port mapping, set its `localBindHost` to `0.0.0.0` and add the matching
+`-p HOST_PORT:CONTAINER_PORT` option. The daemon exits nonzero for missing
+configuration or an invalid tunnel selection. Docker reports process exit
+through the normal container lifecycle; endpoint availability should be
+monitored using the actual forwarded service.
+
+Release builds inject the version from a `v*` tag. For local reproducible
+builds, pass `VERSION=1.0.0` to the Taskfile commands. Desktop build tasks also
+synchronize native package metadata (Windows file info/MSIX/NSIS, macOS plist,
+Linux NFPM) using the numeric version. Prerelease suffixes remain visible in
+the application and daemon version output.
 
 ---
 
@@ -145,9 +188,45 @@ Run all configured tunnels:
   - Windows: `%APPDATA%\sshnat\config.json`
   - Linux: `~/.config/sshnat/config.json`
   - macOS: `~/Library/Application Support/sshnat/config.json`
-- **Path Expansion**: Private key paths support `~` (e.g. `~/.ssh/id_ed25519`), which expands seamlessly across Windows, Linux, and macOS.
+- **Path Expansion**: Private key and known-hosts paths support `~` (e.g. `~/.ssh/id_ed25519`), which expands across Windows, Linux, and macOS.
 
 ---
+
+### 🔐 Advanced Host Settings
+
+Open **Hosts → Add/Edit → Advanced settings** to configure:
+
+| Setting | Behavior |
+| --- | --- |
+| Connection timeout | 1–300 seconds; default 15. In JSON, `connectTimeoutSeconds: 0` also selects the default. |
+| Keepalive interval | `0` uses the 15-second default, `-1` disables probing, and `1`–`86400` sets an explicit interval in seconds. |
+| Host key policy | `accept-new` records unknown keys; `strict` requires an existing matching record. Both reject a changed host key. |
+| Known-hosts file | Empty uses `known_hosts` beside the active `config.json`; an explicit path can point to a trusted OpenSSH file. Strict mode never creates this file. |
+| Jump host chain | Add, remove or reorder saved hosts from nearest to farthest. Each hop retains its own authentication, host key policy and timeout. Cycles are rejected when saving. |
+
+New and existing configurations default to `accept-new` when `hostKeyPolicy`
+is omitted. Before using `strict`, provision the selected known-hosts file
+with the server's verified public key. A failed test reports the handshake or
+host key error without changing the policy.
+
+---
+
+### Configuration migration and backups
+
+Settings can save or copy configuration JSON and import a file or pasted JSON.
+Exports omit passwords and key passphrases by default; enable **Full backup**
+when moving credentials to a private location. Private key files and
+`known_hosts` must be copied separately.
+
+- **Merge** keeps existing entries and assigns new IDs to imported hosts and
+  tunnels, preserving their jump references.
+- **Replace** requires every tunnel to be stopped and saves the exact previous
+  configuration as `config-backup-*.json` beside the active file. Import that
+  backup to restore it.
+- Imported tunnels remain stopped until started manually; their auto-start
+  setting applies the next time the app opens.
+- Unknown fields, unsupported versions, invalid references, and jump cycles
+  are rejected before importing. Legacy documents without a version use schema 1.
 
 ### 🖥️ System Tray Capabilities
 - **Background Daemon**: Closing the window hides it into the tray, ensuring active forwarders remain uninterrupted.
@@ -158,12 +237,14 @@ Run all configured tunnels:
 
 ### 🧪 Testing & Quality Gate
 ```bash
-# Run all Go core and end-to-end tests (22 test cases)
+# Run all Go core and end-to-end tests
 go test -v ./...
 
-# Run frontend Vitest suite (12 test cases)
+# Run frontend Vitest suite
 cd frontend && npm test
 ```
+
+See [Release checklist](RELEASE_CHECKLIST.md) for build, runtime and packaging gates.
 
 ---
 

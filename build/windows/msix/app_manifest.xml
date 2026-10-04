@@ -8,15 +8,15 @@
   IgnorableNamespaces="uap3">
   
   <Identity 
-    Name="com.example.sshnattmp"
-    Publisher="CN=My Company"
-    Version="0.1.0.0" 
+    Name="com.sshnat.app"
+    Publisher="CN=SSHNat"
+    Version="1.0.0.0"
     ProcessorArchitecture="x64" />
   
   <Properties>
-    <DisplayName>My Product</DisplayName>
-    <PublisherDisplayName>My Company</PublisherDisplayName>
-    <Description>A sshnat_tmp application</Description>
+    <DisplayName>SSHNat</DisplayName>
+    <PublisherDisplayName>SSHNat</PublisherDisplayName>
+    <Description>SSH port forwarding client</Description>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
   
@@ -29,10 +29,10 @@
   </Resources>
   
   <Applications>
-    <Application Id="com.example.sshnattmp" Executable="sshnat_tmp.exe" EntryPoint="Windows.FullTrustApplication">
+    <Application Id="com.sshnat.app" Executable="sshnat.exe" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
-        DisplayName="My Product"
-        Description="A sshnat_tmp application"
+        DisplayName="SSHNat"
+        Description="SSH port forwarding client"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png">
@@ -41,7 +41,7 @@
       </uap:VisualElements>
       
       <Extensions>
-        <desktop:Extension Category="windows.fullTrustProcess" Executable="sshnat_tmp.exe" />
+        <desktop:Extension Category="windows.fullTrustProcess" Executable="sshnat.exe" />
         
         
       </Extensions>

@@ -18,10 +18,11 @@ FROM golang:1.26-trixie
 
 ARG TARGETARCH
 ARG GARBLE_VERSION=v0.16.0
+ARG NODE_VERSION=24.15.0
 
 # Install base tools, GCC, and GTK/WebKit dev packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl xz-utils python3 nodejs npm pkg-config gcc libc6-dev \
+    curl xz-utils python3 pkg-config gcc libc6-dev \
     libgtk-3-dev libwebkit2gtk-4.1-dev \
     libgtk-4-dev libwebkitgtk-6.0-dev \
     && pkg-config --atleast-version=4.14 gtk4 \
@@ -29,6 +30,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && pkg-config --exists gtk+-3.0 \
     && pkg-config --exists webkit2gtk-4.1 \
     && rm -rf /var/lib/apt/lists/*
+
+# Debian's bundled Node may be older than the locked frontend toolchain.
+# Install the same Node major/minor baseline as CI, with checksum validation.
+RUN NODE_ARCH=$(case "${TARGETARCH}" in arm64) echo "arm64" ;; *) echo "x64" ;; esac) && \
+    NODE_FILE="node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" && \
+    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_FILE}" -o "/tmp/${NODE_FILE}" && \
+    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" -o /tmp/node-shasums.txt && \
+    (cd /tmp && grep " ${NODE_FILE}$" node-shasums.txt | sha256sum -c -) && \
+    mkdir -p /opt/node && tar -xJ -f "/tmp/${NODE_FILE}" -C /opt/node --strip-components=1 && \
+    rm "/tmp/${NODE_FILE}" /tmp/node-shasums.txt
+
+ENV PATH="/opt/node/bin:${PATH}"
 
 RUN go install mvdan.cc/garble@${GARBLE_VERSION}
 
@@ -190,7 +203,7 @@ export CGO_CFLAGS="-w"
 
 # Build frontend if exists and not already built (host may have built it)
 if [ -d "frontend" ] && [ -f "frontend/package.json" ] && [ ! -d "frontend/dist" ]; then
-    (cd frontend && npm install --silent && npm run build --silent)
+    (cd frontend && npm ci --silent && npm run build --silent)
 fi
 
 # Build
@@ -198,10 +211,10 @@ APP=${APP_NAME:-$(basename $(pwd))}
 mkdir -p bin
 
 EXT=""
-LDFLAGS="-s -w"
+LDFLAGS="-s -w -X github.com/sshnat/sshnat/internal/version.Version=${APP_VERSION:-dev}"
 if [ "$GOOS" = "windows" ]; then
     EXT=".exe"
-    LDFLAGS="-s -w -H windowsgui"
+    LDFLAGS="${LDFLAGS} -H windowsgui"
 fi
 
 TAGS="production"

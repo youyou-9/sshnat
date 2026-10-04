@@ -5,11 +5,15 @@
   let {
     checked = $bindable(false),
     disabled = false,
+    id,
+    "aria-label": ariaLabel,
     onCheckedChange,
     class: className = "",
   }: {
     checked?: boolean;
     disabled?: boolean;
+    id?: string;
+    "aria-label"?: string;
     onCheckedChange?: (checked: boolean) => void;
     class?: string;
   } = $props();
@@ -30,6 +34,6 @@
   );
 </script>
 
-<SwitchPrimitive.Root bind:checked {disabled} {onCheckedChange} class={track}>
+<SwitchPrimitive.Root bind:checked {disabled} {id} aria-label={ariaLabel} {onCheckedChange} class={track}>
   <SwitchPrimitive.Thumb class={thumb} />
 </SwitchPrimitive.Root>

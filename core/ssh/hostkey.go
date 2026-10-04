@@ -6,10 +6,16 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
+
+// Serialize host-key checks and append operations within this process. Reload
+// the file for every check so two simultaneous first connections cannot both
+// accept different keys based on an earlier empty known_hosts snapshot.
+var knownHostsMu sync.Mutex
 
 // hostKeyCallback 返回 hostkey 校验回调：
 //   - InsecureSkipHostKey：跳过（仅测试）
@@ -20,7 +26,14 @@ func hostKeyCallback(opts *DialOptions) (gossh.HostKeyCallback, error) {
 		return gossh.InsecureIgnoreHostKey(), nil //nolint:gosec // 显式开关，仅测试环境
 	}
 
-	file := opts.KnownHostsFile
+	policy := opts.HostKeyPolicy
+	if policy == "" {
+		policy = "accept-new"
+	}
+	if policy != "accept-new" && policy != "strict" {
+		return nil, fmt.Errorf("ssh: unsupported host key policy %q", policy)
+	}
+	file := expandPath(opts.KnownHostsFile)
 	if file == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -29,9 +42,14 @@ func hostKeyCallback(opts *DialOptions) (gossh.HostKeyCallback, error) {
 		file = filepath.Join(home, ".ssh", "known_hosts")
 	}
 
+	knownHostsMu.Lock()
+	defer knownHostsMu.Unlock()
 	if _, err := os.Stat(file); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("ssh: stat known_hosts: %w", err)
+		}
+		if policy == "strict" {
+			return nil, fmt.Errorf("ssh: strict host key checking requires an existing known_hosts file: %w", err)
 		}
 		if mkErr := os.MkdirAll(filepath.Dir(file), 0o700); mkErr != nil {
 			return nil, fmt.Errorf("ssh: create known_hosts dir: %w", mkErr)
@@ -45,18 +63,23 @@ func hostKeyCallback(opts *DialOptions) (gossh.HostKeyCallback, error) {
 		}
 	}
 
-	strict, strictErr := knownhosts.New(file)
-	if strictErr != nil {
-		return nil, fmt.Errorf("ssh: load known_hosts: %w", strictErr)
+	if _, err := knownhosts.New(file); err != nil {
+		return nil, fmt.Errorf("ssh: load known_hosts: %w", err)
 	}
 
 	return func(hostname string, remote net.Addr, key gossh.PublicKey) error {
-		err := strict(hostname, remote, key)
+		knownHostsMu.Lock()
+		defer knownHostsMu.Unlock()
+		strict, err := knownhosts.New(file)
+		if err != nil {
+			return fmt.Errorf("ssh: load known_hosts: %w", err)
+		}
+		err = strict(hostname, remote, key)
 		if err == nil {
 			return nil
 		}
 		var kerr *knownhosts.KeyError
-		if errors.As(err, &kerr) && len(kerr.Want) == 0 {
+		if policy == "accept-new" && errors.As(err, &kerr) && len(kerr.Want) == 0 {
 			// 未知主机 → accept-new
 			line := knownhosts.Line([]string{knownhosts.Normalize(hostname)}, key)
 			f, ferr := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 )
@@ -21,9 +22,10 @@ type SSHSpec struct {
 type ForwardSpec struct {
 	Mode string // "L" | "R" | "D"
 
-	BindHost string // 监听绑定地址（可空 = localhost）
-	BindPort int    // 监听端口
-	Socket   string // 监听 unix socket（OpenSSH 语法 socket:target）
+	BindHost     string // 监听绑定地址（可空 = localhost）
+	BindPort     int    // 监听端口
+	Socket       string // 监听 unix socket（OpenSSH 语法 socket:target）
+	TargetSocket string // 目标 unix socket（与 Socket 配对时使用）
 
 	TargetHost string // 目标主机
 	TargetPort int    // 目标端口
@@ -54,13 +56,29 @@ func ParseSSHCommand(args []string) (*SSHSpec, error) {
 	i := 0
 	for i < len(args) {
 		arg := args[i]
+		// OpenSSH accepts both "-p 2222" and compact forms such as
+		// "-p2222" / "-L8080:db:3306". Normalize the latter before
+		// dispatching so an attached value is not mistaken for an unknown
+		// flag (which previously caused the port/forward to be silently lost).
+		attached := ""
+		if flag, value, ok := splitAttachedOption(arg); ok {
+			arg, attached = flag, value
+		}
 		switch {
 		case valueFlags[arg]:
-			if i+1 >= len(args) {
+			val := attached
+			if val == "" {
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("config: flag %s requires a value", arg)
+				}
+				val = args[i+1]
+				i += 2
+			} else {
+				i++
+			}
+			if val == "" {
 				return nil, fmt.Errorf("config: flag %s requires a value", arg)
 			}
-			val := args[i+1]
-			i += 2
 			var err error
 			switch arg {
 			case "-p":
@@ -111,6 +129,18 @@ func ParseSSHCommand(args []string) (*SSHSpec, error) {
 		return nil, fmt.Errorf("config: no destination host found")
 	}
 	return spec, nil
+}
+
+// splitAttachedOption recognizes OpenSSH's compact single-letter value flags.
+// It deliberately leaves unknown options untouched so their existing
+// best-effort handling remains unchanged.
+func splitAttachedOption(arg string) (flag, value string, ok bool) {
+	for _, candidate := range []string{"-p", "-l", "-i", "-J", "-L", "-R", "-D", "-F", "-o"} {
+		if strings.HasPrefix(arg, candidate) && len(arg) > len(candidate) {
+			return candidate, arg[len(candidate):], true
+		}
+	}
+	return "", "", false
 }
 
 // splitBracketed 按冒号切分，但保留方括号 [...] 内的冒号（支持 IPv6）。
@@ -171,6 +201,65 @@ func parseForward(mode byte, val string) (*ForwardSpec, error) {
 		}
 		return fw, nil
 	}
+	// OpenSSH also supports stream-local forwarding with a pair of Unix
+	// socket paths (for example, -L /tmp/local.sock:/run/service.sock and
+	// -R /tmp/remote.sock:/tmp/local.sock).  The old parser treated these as
+	// invalid numeric ports even though the runtime forwarders support them.
+	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+		if port, err := strconv.Atoi(parts[0]); err == nil {
+			// TCP listener/remote bind to a Unix target, for example
+			// -L 8080:/run/service.sock. OpenSSH accepts this form and the
+			// runtime forwarder can dial a server-side stream-local socket.
+			if validPort(port) || (mode == 'R' && port == 0) {
+				if looksLikeSocketPath(parts[1]) {
+					fw.BindPort = port
+					fw.TargetSocket = parts[1]
+					return fw, nil
+				}
+			}
+		} else {
+			fw.Socket = parts[0]
+			fw.TargetSocket = parts[1]
+			return fw, nil
+		}
+	}
+	// A TCP listener with an explicit bind host can also target a Unix socket:
+	// -R 127.0.0.1:9000:/tmp/service.sock.
+	if len(parts) == 3 && parts[0] != "" && parts[1] != "" && parts[2] != "" {
+		if port, err := strconv.Atoi(parts[1]); err == nil && (validPort(port) || (mode == 'R' && port == 0)) && !looksLikeSocketPath(parts[0]) && looksLikeSocketPath(parts[2]) {
+			fw.BindHost = cleanHost(parts[0])
+			fw.BindPort = port
+			fw.TargetSocket = parts[2]
+			return fw, nil
+		}
+	}
+	// A TCP listener may include an explicit bind address before the port
+	// while forwarding to a Unix socket, for example:
+	// -R 127.0.0.1:9000:/run/service.sock. This is the three-part analogue
+	// of the port:socket form handled above.
+	if len(parts) == 3 && looksLikeSocketPath(parts[2]) {
+		port, err := strconv.Atoi(parts[1])
+		if err == nil && (validPort(port) || (mode == 'R' && port == 0)) {
+			fw.BindHost = cleanHost(parts[0])
+			fw.BindPort = port
+			fw.TargetSocket = parts[2]
+			return fw, nil
+		}
+	}
+	// A stream-local listener may also forward to a regular TCP target:
+	// -L /tmp/local.sock:db.internal:3306 (and the corresponding -R form).
+	if len(parts) == 3 && parts[0] != "" {
+		if _, err := strconv.Atoi(parts[0]); err != nil && looksLikeSocketPath(parts[0]) {
+			port, perr := strconv.Atoi(parts[2])
+			if perr != nil || !validPort(port) || cleanHost(parts[1]) == "" {
+				return nil, fmt.Errorf("config: invalid -%c %q", mode, val)
+			}
+			fw.Socket = parts[0]
+			fw.TargetHost = cleanHost(parts[1])
+			fw.TargetPort = port
+			return fw, nil
+		}
+	}
 
 	isPortAllowed := func(port int) bool {
 		if mode == 'R' && port == 0 {
@@ -205,6 +294,11 @@ func parseForward(mode byte, val string) (*ForwardSpec, error) {
 
 func validPort(port int) bool { return port > 0 && port <= 65535 }
 
+func looksLikeSocketPath(path string) bool {
+	path = strings.TrimSpace(path)
+	return strings.ContainsAny(path, `/\\`) || strings.HasSuffix(strings.ToLower(path), ".sock")
+}
+
 func isSSHProgram(arg string) bool {
 	arg = strings.ToLower(arg)
 	if i := strings.LastIndexAny(arg, `/\\`); i >= 0 {
@@ -216,6 +310,15 @@ func isSSHProgram(arg string) bool {
 // SpecToSettings 把解析结果转换为配置条目。
 // 返回一个 Host 与若干 Tunnel（已建立 ID 并互相引用）。
 func SpecToSettings(spec *SSHSpec) (*Host, []Tunnel) {
+	host, _, tunnels, _ := SpecToSettingsWithJumps(spec)
+	return host, tunnels
+}
+
+// SpecToSettingsWithJumps converts an SSH command into the destination host,
+// any ProxyJump hosts, and tunnel entries. Jump hosts inherit the target's
+// selected key authentication when -i is present; passwords and agent
+// credentials still need to be filled in by the user after import.
+func SpecToSettingsWithJumps(spec *SSHSpec) (*Host, []Host, []Tunnel, error) {
 	host := &Host{
 		ID:   NewID("host"),
 		Name: spec.Hostname,
@@ -231,9 +334,19 @@ func SpecToSettings(spec *SSHSpec) (*Host, []Tunnel) {
 		host.Auth.Method = AuthMethodKey
 		host.Auth.KeyPath = spec.KeyPath
 	}
-	// 注意：-J 跳板仅保留在 spec.Jumps 原始串中，
-	// 需要用户补全跳板凭据后手动创建 Host 并关联。
-	_ = spec.Jumps
+
+	jumpHosts := make([]Host, 0, len(spec.Jumps))
+	for _, raw := range spec.Jumps {
+		jump, err := parseJumpHost(raw, spec.KeyPath)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if jump.User == "" {
+			jump.User = spec.User
+		}
+		host.JumpHostIDs = append(host.JumpHostIDs, jump.ID)
+		jumpHosts = append(jumpHosts, *jump)
+	}
 
 	var tunnels []Tunnel
 	for _, f := range spec.Forwards {
@@ -247,27 +360,87 @@ func SpecToSettings(spec *SSHSpec) (*Host, []Tunnel) {
 		case TypeLocal:
 			t.LocalBindHost = f.BindHost
 			t.LocalPort = f.BindPort
+			t.LocalSocket = f.Socket
 			t.TargetHost = f.TargetHost
 			t.TargetPort = f.TargetPort
+			t.TargetSocket = f.TargetSocket
 		case TypeRemote:
 			t.RemoteBindHost = f.BindHost
 			t.RemotePort = f.BindPort
+			t.RemoteSocket = f.Socket
 			t.TargetHost = f.TargetHost
 			t.TargetPort = f.TargetPort
+			t.TargetSocket = f.TargetSocket
 		case TypeDynamic:
 			t.LocalBindHost = f.BindHost
 			t.SocksPort = f.BindPort
 		}
 		tunnels = append(tunnels, t)
 	}
-	return host, tunnels
+	return host, jumpHosts, tunnels, nil
+}
+
+func parseJumpHost(raw, keyPath string) (*Host, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("config: empty ProxyJump host")
+	}
+	user := ""
+	address := raw
+	if at := strings.LastIndex(address, "@"); at >= 0 {
+		user, address = address[:at], address[at+1:]
+	}
+	if user == "" {
+		user = ""
+	}
+	hostname, port := address, 22
+	if h, p, err := net.SplitHostPort(address); err == nil {
+		hostname = strings.Trim(h, "[]")
+		port, err = strconv.Atoi(p)
+		if err != nil || !validPort(port) {
+			return nil, fmt.Errorf("config: invalid ProxyJump port %q", p)
+		}
+	} else if strings.HasPrefix(address, "[") && strings.HasSuffix(address, "]") {
+		hostname = strings.Trim(address, "[]")
+	} else if strings.HasPrefix(address, "[") && strings.Contains(address, "]") {
+		return nil, fmt.Errorf("config: invalid ProxyJump %q", raw)
+	} else if strings.Count(address, ":") == 1 {
+		parts := strings.SplitN(address, ":", 2)
+		hostname = parts[0]
+		var err error
+		port, err = strconv.Atoi(parts[1])
+		if err != nil || !validPort(port) {
+			return nil, fmt.Errorf("config: invalid ProxyJump port %q", parts[1])
+		}
+	}
+	if hostname == "" {
+		return nil, fmt.Errorf("config: invalid ProxyJump %q", raw)
+	}
+	auth := AuthConfig{Method: AuthMethodPassword}
+	if keyPath != "" {
+		auth.Method = AuthMethodKey
+		auth.KeyPath = keyPath
+	}
+	return &Host{ID: NewID("host"), Name: hostname, Host: hostname, Port: port, User: user, Auth: auth}, nil
 }
 
 func forwardName(f *ForwardSpec) string {
 	switch f.Mode {
 	case TypeLocal:
+		if f.Socket != "" {
+			if f.TargetSocket != "" {
+				return fmt.Sprintf("%s → %s", f.Socket, f.TargetSocket)
+			}
+			return fmt.Sprintf("%s → %s:%d", f.Socket, f.TargetHost, f.TargetPort)
+		}
 		return fmt.Sprintf("%d → %s:%d", f.BindPort, f.TargetHost, f.TargetPort)
 	case TypeRemote:
+		if f.Socket != "" {
+			if f.TargetSocket != "" {
+				return fmt.Sprintf("%s ← %s", f.Socket, f.TargetSocket)
+			}
+			return fmt.Sprintf("%s ← %s:%d", f.Socket, f.TargetHost, f.TargetPort)
+		}
 		return fmt.Sprintf("%d ← %s:%d", f.BindPort, f.TargetHost, f.TargetPort)
 	default:
 		return fmt.Sprintf("SOCKS :%d", f.BindPort)

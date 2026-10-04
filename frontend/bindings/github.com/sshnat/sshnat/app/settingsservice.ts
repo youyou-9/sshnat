@@ -15,8 +15,33 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * Export returns portable JSON. Credentials are omitted unless the user
+ * explicitly requests a full backup; exporting never modifies stored data.
+ */
+export function Export(includeSecrets: boolean): $CancellablePromise<string> {
+    return $Call.ByID(2537649205, includeSecrets);
+}
+
+/**
+ * ExportFile opens the native save dialog and writes a private atomic backup.
+ * An empty result means that the user cancelled the dialog.
+ */
+export function ExportFile(includeSecrets: boolean): $CancellablePromise<string> {
+    return $Call.ByID(546909907, includeSecrets);
+}
+
+/**
  * Get 返回应用信息。
  */
 export function Get(): $CancellablePromise<$models.AppInfo | null> {
     return $Call.ByID(1510137809);
+}
+
+/**
+ * Import validates a complete document before mutation. Merge appends with
+ * remapped IDs, so existing tunnels and host credentials are never overwritten.
+ * Replace requires stopped tunnels and creates a full backup first.
+ */
+export function Import(document: string, mode: string): $CancellablePromise<$models.ConfigImportResult | null> {
+    return $Call.ByID(3016877318, document, mode);
 }

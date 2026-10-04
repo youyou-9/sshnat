@@ -5,17 +5,17 @@ import "sync"
 
 // Snapshot 是某一时刻的计数快照。
 type Snapshot struct {
-	Tx         uint64 `json:"tx"`        // 累计发送字节
-	Rx         uint64 `json:"rx"`        // 累计接收字节
+	Tx         uint64 `json:"tx"`         // 累计发送字节
+	Rx         uint64 `json:"rx"`         // 累计接收字节
 	ActiveConn int64  `json:"activeConn"` // 当前活跃连接数
 	TotalConn  uint64 `json:"totalConn"`  // 累计连接数
 }
 
 // Counter 是单个隧道的计数器，所有方法并发安全。
 type Counter struct {
-	tx, rx       atomicUint64
-	totalConn    atomicUint64
-	activeConn   atomicInt64
+	tx, rx     atomicUint64
+	totalConn  atomicUint64
+	activeConn atomicInt64
 }
 
 func NewCounter() *Counter { return &Counter{} }

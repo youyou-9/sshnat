@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Terminal, KeyRound, Server, ChevronDown, ChevronUp, Copy, Check } from "@lucide/svelte";
+  import { untrack } from "svelte";
   import Dialog from "@/lib/components/ui/Dialog.svelte";
   import Button from "@/lib/components/ui/Button.svelte";
   import Input from "@/lib/components/ui/Input.svelte";
@@ -7,9 +8,11 @@
   import Select from "@/lib/components/ui/Select.svelte";
   import Switch from "@/lib/components/ui/Switch.svelte";
   import Badge from "@/lib/components/ui/Badge.svelte";
-  import { TunnelService, HostService, type CreateTunnelRequest, type UpdateTunnelRequest, type Host, type Tunnel } from "@/lib/api";
+  import { TunnelService, HostService, type Host, type Tunnel } from "@/lib/api";
   import { app, refreshTunnels, refreshHosts } from "@/lib/state.svelte";
   import { t } from "@/lib/i18n";
+  import { buildTunnelCliCommand, copyText, defaultCommandShell, type CommandShell } from "@/lib/tunnel-command";
+  import { buildTunnelRequest } from "@/lib/tunnel-form";
 
   let {
     open = $bindable(false),
@@ -22,18 +25,27 @@
   let name = $state("");
   let hostId = $state("");
   let type = $state("L");
+  let localBindHost = $state("");
   let localPort = $state("");
+  let localSocket = $state("");
   let remotePort = $state("");
+  let remoteSocket = $state("");
   let remoteBindHost = $state("");
   let socksPort = $state("");
   let targetHost = $state("127.0.0.1");
   let targetPort = $state("");
+  let targetSocket = $state("");
   let autoStart = $state(false);
   let useCmdMode = $state(false);
   let cmdText = $state("");
   let error = $state("");
   let submitting = $state(false);
   let copied = $state(false);
+  let commandShell = $state<CommandShell>(defaultCommandShell());
+  const commandShellOptions = [
+    { value: "powershell", label: "PowerShell" },
+    { value: "posix", label: "POSIX shell (bash / zsh)" },
+  ];
 
   // 新建主机字段（当 hostId === "__new__" 时使用）
   let hName = $state("");
@@ -76,64 +88,65 @@
   });
 
   // 生成真实、完整的 OpenSSH 命令预览
-  const previewSshCommand = $derived.by(() => {
+  const commandPreview = $derived.by(() => {
     const hostObj = app.hosts.find((h) => h.id === hostId);
-    const user = hostObj ? hostObj.user : (hUser.trim() || "root");
-    const addr = hostObj ? hostObj.host : (hAddr.trim() || "host");
-    const port = hostObj ? hostObj.port : (Number(hPort) || 22);
-    const authMethod = hostObj ? (hostObj.auth?.method || "password") : hAuth;
-    const keyPath = hostObj ? (hostObj.auth?.keyPath || "") : hKeyPath.trim();
-
-    const parts = ["ssh"];
-    if (authMethod === "key" && keyPath) {
-      parts.push(`-i ${keyPath}`);
+    const previewTunnel = {
+      type,
+      localBindHost: localBindHost.trim(),
+      localPort: Number(localPort) || 8080,
+      localSocket: localSocket.trim(),
+      targetHost: targetHost.trim() || "127.0.0.1",
+      targetPort: Number(targetPort) || (type === "R" ? 8080 : 3306),
+      targetSocket: targetSocket.trim(),
+      remoteBindHost: remoteBindHost.trim(),
+      remotePort: Number(remotePort) || 8080,
+      remoteSocket: remoteSocket.trim(),
+      socksPort: Number(socksPort) || 1080,
+    };
+    const previewHost = hostObj
+      ? { ...hostObj, auth: showEditAuth ? { method: hAuth, keyPath: hKeyPath.trim() } : hostObj.auth }
+      : {
+          user: hUser.trim() || "root",
+          host: hAddr.trim() || "host",
+          port: Number(hPort) || 22,
+          auth: { method: hAuth, keyPath: hKeyPath.trim() },
+        };
+    try {
+      return { command: buildTunnelCliCommand(previewTunnel, previewHost, { hosts: app.hosts, shell: commandShell }), error: "" };
+    } catch (previewError) {
+      return { command: "", error: String(previewError instanceof Error ? previewError.message : previewError) };
     }
-    if (port && port !== 22) {
-      parts.push(`-p ${port}`);
-    }
-    parts.push("-N");
-
-    if (type === "L") {
-      const lp = localPort || "8080";
-      const th = targetHost || "127.0.0.1";
-      const tp = targetPort || "3306";
-      parts.push(`-L ${lp}:${th}:${tp}`);
-    } else if (type === "R") {
-      const rb = remoteBindHost ? `${remoteBindHost}:` : "";
-      const rp = remotePort || "8080";
-      const th = targetHost || "127.0.0.1";
-      const tp = targetPort || "8080";
-      parts.push(`-R ${rb}${rp}:${th}:${tp}`);
-    } else {
-      const sp = socksPort || "1080";
-      parts.push(`-D ${sp}`);
-    }
-
-    parts.push(`${user}@${addr}`);
-    return parts.join(" ");
   });
+  const previewSshCommand = $derived(commandPreview.command);
 
-  function copyCommand() {
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(previewSshCommand);
-      copied = true;
-      setTimeout(() => (copied = false), 2000);
+  async function copyCommand() {
+    if (!previewSshCommand) return;
+    try {
+      if (await copyText(previewSshCommand)) {
+        copied = true;
+        setTimeout(() => (copied = false), 2000);
+      } else error = t(app.language, "tunnel.copyError");
+    } catch (copyError) {
+      error = copyError instanceof Error ? copyError.message : String(copyError);
     }
   }
 
   // 当选择已有主机或切换时
   function onHostSelect(selectedId: string) {
     hostId = selectedId;
+    showEditAuth = false;
     if (selectedId && selectedId !== "__new__") {
       const selectedHost = app.hosts.find((h) => h.id === selectedId);
-      if (selectedHost) {
-        hAuth = selectedHost.auth?.method || "password";
-        hPassword = selectedHost.auth?.password ?? "";
-        hKeyPath = selectedHost.auth?.keyPath ?? "";
-        hKeyPassphrase = selectedHost.auth?.keyPassphrase ?? "";
-        hAgentSocket = selectedHost.auth?.agentSocket ?? "";
-      }
+      if (selectedHost) loadHostAuth(selectedHost);
     }
+  }
+
+  function loadHostAuth(host: Host) {
+    hAuth = host.auth?.method || "password";
+    hPassword = host.auth?.password ?? "";
+    hKeyPath = host.auth?.keyPath ?? "";
+    hKeyPassphrase = host.auth?.keyPassphrase ?? "";
+    hAgentSocket = host.auth?.agentSocket ?? "";
   }
 
   const isPortValid = (p: string) => {
@@ -153,13 +166,16 @@
     } else {
       if (!hostId || hostId === "__new__") return false;
     }
+    if ((isCreatingNewHost || showEditAuth) && hAuth === "key" && !hKeyPath.trim()) return false;
 
     // 校验转发参数
     if (type === "L") {
-      return isPortValid(localPort) && isPortValid(targetPort);
+      return (isPortValid(localPort) || localSocket.trim().length > 0) &&
+        (isPortValid(targetPort) || targetSocket.trim().length > 0);
     }
     if (type === "R") {
-      return isPortValid(remotePort) && isPortValid(targetPort);
+      return (isPortValid(remotePort) || remoteSocket.trim().length > 0) &&
+        (isPortValid(targetPort) || targetSocket.trim().length > 0);
     }
     if (type === "D") {
       return isPortValid(socksPort);
@@ -168,7 +184,8 @@
   });
 
   function reset() {
-    name = localPort = remotePort = remoteBindHost = socksPort = targetPort = cmdText = "";
+    name = localBindHost = localPort = localSocket = remotePort = remoteSocket = remoteBindHost = socksPort = targetPort = targetSocket = cmdText = "";
+    commandShell = defaultCommandShell();
     targetHost = "127.0.0.1";
     hName = hAddr = hPassword = hKeyPath = hKeyPassphrase = hAgentSocket = "";
     hPort = "22";
@@ -183,9 +200,7 @@
     copied = false;
     if (app.hosts.length > 0) {
       hostId = app.hosts[0].id;
-      hAuth = app.hosts[0].auth?.method || "password";
-      hPassword = app.hosts[0].auth?.password ?? "";
-      hKeyPath = app.hosts[0].auth?.keyPath ?? "";
+      loadHostAuth(app.hosts[0]);
     } else {
       hostId = "__new__";
     }
@@ -194,34 +209,33 @@
   function close() { open = false; reset(); }
 
   $effect(() => {
-    if (open) {
-      if (tunnelToEdit) {
+    const isOpen = open;
+    const editedTunnel = tunnelToEdit;
+    untrack(() => {
+    if (isOpen) {
+      if (editedTunnel) {
         // 编辑模式：装载已有配置
-        name = tunnelToEdit.name;
-        hostId = tunnelToEdit.hostId;
-        type = tunnelToEdit.type;
-        localPort = tunnelToEdit.localPort ? String(tunnelToEdit.localPort) : "";
-        remotePort = tunnelToEdit.remotePort ? String(tunnelToEdit.remotePort) : "";
-        remoteBindHost = tunnelToEdit.remoteBindHost ?? "";
-        socksPort = tunnelToEdit.socksPort ? String(tunnelToEdit.socksPort) : "";
-        targetHost = tunnelToEdit.targetHost || "127.0.0.1";
-        targetPort = tunnelToEdit.targetPort ? String(tunnelToEdit.targetPort) : "";
-        autoStart = tunnelToEdit.autoStart;
-        const h = app.hosts.find((x) => x.id === tunnelToEdit.hostId);
-        if (h) {
-          hAuth = h.auth?.method || "password";
-          hPassword = h.auth?.password ?? "";
-          hKeyPath = h.auth?.keyPath ?? "";
-          hKeyPassphrase = h.auth?.keyPassphrase ?? "";
-          hAgentSocket = h.auth?.agentSocket ?? "";
-        }
+        name = editedTunnel.name;
+        hostId = editedTunnel.hostId;
+        type = editedTunnel.type;
+        localBindHost = editedTunnel.localBindHost ?? "";
+        localPort = editedTunnel.localPort ? String(editedTunnel.localPort) : "";
+        localSocket = editedTunnel.localSocket ?? "";
+        remotePort = editedTunnel.remotePort ? String(editedTunnel.remotePort) : "";
+        remoteSocket = editedTunnel.remoteSocket ?? "";
+        remoteBindHost = editedTunnel.remoteBindHost ?? "";
+        socksPort = editedTunnel.socksPort ? String(editedTunnel.socksPort) : "";
+        targetHost = editedTunnel.targetHost || "127.0.0.1";
+        targetPort = editedTunnel.targetPort ? String(editedTunnel.targetPort) : "";
+        targetSocket = editedTunnel.targetSocket ?? "";
+        autoStart = editedTunnel.autoStart;
+        const h = app.hosts.find((x) => x.id === editedTunnel.hostId);
+        if (h) loadHostAuth(h);
       } else {
         // 新建模式
         if (app.hosts.length > 0 && (!hostId || hostId === "__new__")) {
           hostId = app.hosts[0].id;
-          hAuth = app.hosts[0].auth?.method || "password";
-          hPassword = app.hosts[0].auth?.password ?? "";
-          hKeyPath = app.hosts[0].auth?.keyPath ?? "";
+          loadHostAuth(app.hosts[0]);
         } else if (app.hosts.length === 0) {
           hostId = "__new__";
         }
@@ -229,6 +243,7 @@
     } else {
       reset();
     }
+    });
   });
 
   async function submit() {
@@ -236,7 +251,7 @@
     error = ""; submitting = true;
     try {
       if (useCmdMode) {
-        await TunnelService.CreateFromSSHCommand(cmdText.trim());
+        await TunnelService.CreateFromSSHCommandForShell(cmdText.trim(), commandShell);
         await Promise.all([refreshTunnels(), refreshHosts()]);
       } else {
         let finalHostId = hostId;
@@ -271,48 +286,26 @@
           // 用户就地修改了已有主机的凭据
           const existing = app.hosts.find((h) => h.id === hostId);
           if (existing) {
-            existing.auth = {
+            const updatedHost: Host = { ...existing, auth: {
               method: hAuth,
               password: hAuth === "password" ? hPassword : "",
               keyPath: hAuth === "key" ? hKeyPath.trim() : "",
               keyPassphrase: hAuth === "key" ? hKeyPassphrase : "",
               agentSocket: hAuth === "agent" ? hAgentSocket.trim() : "",
-            };
-            await HostService.Save(existing as any);
+            } };
+            await HostService.Save(updatedHost);
             await refreshHosts();
           }
         }
 
-        if (isEditing && tunnelToEdit) {
-          const req: UpdateTunnelRequest = {
-            id: tunnelToEdit.id,
-            name: name.trim(),
-            hostId: finalHostId,
-            type,
-            autoStart,
-            localPort: type === "L" ? Number(localPort) || 0 : 0,
-            targetHost: (type === "L" || type === "R") ? (targetHost.trim() || "127.0.0.1") : "",
-            targetPort: (type === "L" || type === "R") ? Number(targetPort) || 0 : 0,
-            remotePort: type === "R" ? Number(remotePort) || 0 : 0,
-            remoteBindHost: type === "R" ? remoteBindHost.trim() : "",
-            socksPort: type === "D" ? Number(socksPort) || 0 : 0,
-          };
-          await (TunnelService as any).Update(req);
-        } else {
-          const req: CreateTunnelRequest = {
-            name: name.trim(),
-            hostId: finalHostId,
-            type,
-            autoStart,
-            localPort: type === "L" ? Number(localPort) || 0 : 0,
-            targetHost: (type === "L" || type === "R") ? (targetHost.trim() || "127.0.0.1") : "",
-            targetPort: (type === "L" || type === "R") ? Number(targetPort) || 0 : 0,
-            remotePort: type === "R" ? Number(remotePort) || 0 : 0,
-            remoteBindHost: type === "R" ? remoteBindHost.trim() : "",
-            socksPort: type === "D" ? Number(socksPort) || 0 : 0,
-          };
-          await TunnelService.Create(req);
-        }
+        const req = buildTunnelRequest({
+          name, hostId: finalHostId, type, autoStart,
+          localBindHost, localPort, localSocket,
+          targetHost, targetPort, targetSocket,
+          remoteBindHost, remotePort, remoteSocket, socksPort,
+        });
+        if (isEditing && tunnelToEdit) await TunnelService.Update({ ...req, id: tunnelToEdit.id });
+        else await TunnelService.Create(req);
         await refreshTunnels();
       }
       close();
@@ -461,14 +454,29 @@
           <div class="space-y-3">
             <div class="grid grid-cols-2 gap-3">
               <div class="space-y-1.5">
+                <Label for="t-lbindhost">{t(app.language, "tunnel.localBindHost")}</Label>
+                <Input id="t-lbindhost" placeholder="127.0.0.1" bind:value={localBindHost} disabled={!!localSocket.trim()} class="font-mono" />
+              </div>
+              <div class="space-y-1.5">
                 <Label for="t-lport">{t(app.language, "tunnel.localPort")}</Label>
-                <Input id="t-lport" placeholder="8080" bind:value={localPort} class="font-mono" inputmode="numeric" />
+                <Input id="t-lport" placeholder="8080" bind:value={localPort} disabled={!!localSocket.trim()} class="font-mono" inputmode="numeric" />
               </div>
               <div class="space-y-1.5">
                 <Label for="t-tport">{t(app.language, "tunnel.targetPort")}</Label>
-                <Input id="t-tport" placeholder="3306" bind:value={targetPort} class="font-mono" inputmode="numeric" />
+                <Input id="t-tport" placeholder="3306" bind:value={targetPort} disabled={!!targetSocket.trim()} class="font-mono" inputmode="numeric" />
               </div>
             </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div class="space-y-1.5">
+                <Label for="t-lsocket">{t(app.language, "tunnel.localSocket")}</Label>
+                <Input id="t-lsocket" placeholder="/tmp/sshnat.sock" bind:value={localSocket} class="font-mono" />
+              </div>
+              <div class="space-y-1.5">
+                <Label for="t-tsocket">{t(app.language, "tunnel.targetSocket")}</Label>
+                <Input id="t-tsocket" placeholder="/run/service.sock" bind:value={targetSocket} class="font-mono" />
+              </div>
+            </div>
+            <p class="text-[11px] text-dim/70">{t(app.language, "tunnel.socketHint")}</p>
 
             <div class="space-y-1.5">
               <div class="flex items-center justify-between">
@@ -498,10 +506,10 @@
                   {/if}
                 </div>
               </div>
-              <Input id="t-thost" placeholder="127.0.0.1" bind:value={targetHost} class="font-mono" />
+              <Input id="t-thost" placeholder="127.0.0.1" bind:value={targetHost} disabled={!!targetSocket.trim()} class="font-mono" />
             </div>
           </div>
-          {#if activeHostAddr && targetHost.trim() === activeHostAddr}
+          {#if !targetSocket.trim() && activeHostAddr && !/^(localhost|127\..*|\[?::1\]?)$/i.test(activeHostAddr) && targetHost.trim() === activeHostAddr}
             <div class="mt-2.5 flex items-center justify-between rounded bg-warn/10 border border-warn/30 px-2.5 py-1.5 text-[11px] text-warn">
               <span>{t(app.language, "tunnel.targetHostWarning")}</span>
               <button
@@ -518,13 +526,24 @@
             <div class="grid grid-cols-2 gap-3">
               <div class="space-y-1.5">
                 <Label for="t-rbindhost">{t(app.language, "tunnel.remoteBindHost")}</Label>
-                <Input id="t-rbindhost" placeholder="127.0.0.1" bind:value={remoteBindHost} class="font-mono" />
+                <Input id="t-rbindhost" placeholder="127.0.0.1" bind:value={remoteBindHost} disabled={!!remoteSocket.trim()} class="font-mono" />
               </div>
               <div class="space-y-1.5">
                 <Label for="t-rport">{t(app.language, "tunnel.remoteBind")}</Label>
-                <Input id="t-rport" placeholder="8080" bind:value={remotePort} class="font-mono" inputmode="numeric" />
+                <Input id="t-rport" placeholder="8080" bind:value={remotePort} disabled={!!remoteSocket.trim()} class="font-mono" inputmode="numeric" />
               </div>
             </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div class="space-y-1.5">
+                <Label for="t-rsocket">{t(app.language, "tunnel.remoteSocket")}</Label>
+                <Input id="t-rsocket" placeholder="/tmp/sshnat.sock" bind:value={remoteSocket} class="font-mono" />
+              </div>
+              <div class="space-y-1.5">
+                <Label for="t-rtargetsocket">{t(app.language, "tunnel.targetSocket")}</Label>
+                <Input id="t-rtargetsocket" placeholder="/tmp/service.sock" bind:value={targetSocket} class="font-mono" />
+              </div>
+            </div>
+            <p class="text-[11px] text-dim/70">{t(app.language, "tunnel.socketHint")}</p>
             <div class="grid grid-cols-2 gap-3">
               <div class="space-y-1.5">
                 <div class="flex items-center justify-between">
@@ -537,30 +556,42 @@
                     127.0.0.1
                   </button>
                 </div>
-                <Input id="t-rhost" placeholder="127.0.0.1" bind:value={targetHost} class="font-mono" />
+                <Input id="t-rhost" placeholder="127.0.0.1" bind:value={targetHost} disabled={!!targetSocket.trim()} class="font-mono" />
               </div>
               <div class="space-y-1.5">
                 <Label for="t-rtarget">{t(app.language, "tunnel.remoteTargetPort")}</Label>
-                <Input id="t-rtarget" placeholder="8080" bind:value={targetPort} class="font-mono" inputmode="numeric" />
+                <Input id="t-rtarget" placeholder="8080" bind:value={targetPort} disabled={!!targetSocket.trim()} class="font-mono" inputmode="numeric" />
               </div>
             </div>
           </div>
         {:else}
-          <div class="max-w-[180px] space-y-1.5">
-            <Label for="t-dport">{t(app.language, "tunnel.socksPort")}</Label>
-            <Input id="t-dport" placeholder="1080" bind:value={socksPort} class="font-mono" inputmode="numeric" />
+          <div class="grid grid-cols-2 gap-3">
+            <div class="space-y-1.5">
+              <Label for="t-dbindhost">{t(app.language, "tunnel.localBindHost")}</Label>
+              <Input id="t-dbindhost" placeholder="127.0.0.1" bind:value={localBindHost} class="font-mono" />
+            </div>
+            <div class="space-y-1.5">
+              <Label for="t-dport">{t(app.language, "tunnel.socksPort")}</Label>
+              <Input id="t-dport" placeholder="1080" bind:value={socksPort} class="font-mono" inputmode="numeric" />
+            </div>
           </div>
         {/if}
 
-        <!-- 真实 OpenSSH 命令预览 -->
-        <div class="mt-3 pt-2.5 border-t border-edge/60 flex items-start justify-between gap-2">
-          <div class="min-w-0 flex-1 break-all font-mono text-[11px] text-accent/90 bg-base/80 rounded px-2.5 py-1.5 border border-edge/40 select-text">
-            {previewSshCommand}
+        <!-- OpenSSH command preview quoted for the selected terminal shell. -->
+        <div class="mt-3 border-t border-edge/60 pt-2.5">
+          <div class="mb-2 max-w-[220px]">
+            <Label for="t-command-shell">{t(app.language, "tunnel.commandShell")}</Label>
+            <Select id="t-command-shell" value={commandShell} onValueChange={(shell) => (commandShell = shell as CommandShell)} options={commandShellOptions} />
+          </div>
+          <div class="flex items-start justify-between gap-2">
+          <div class={`min-w-0 flex-1 break-all font-mono text-[11px] ${commandPreview.error ? "text-bad" : "text-accent/90"} bg-base/80 rounded px-2.5 py-1.5 border border-edge/40 select-text`}>
+            {commandPreview.error || previewSshCommand}
           </div>
           <button
             type="button"
             class="flex items-center gap-1 shrink-0 rounded border border-edge/60 bg-base px-2.5 py-1 text-[11px] text-dim hover:text-ink hover:bg-hover transition-colors"
             title={t(app.language, "tunnel.copyCli")}
+            disabled={!previewSshCommand}
             onclick={copyCommand}
           >
             {#if copied}
@@ -571,6 +602,7 @@
               <span>{t(app.language, "common.copy")}</span>
             {/if}
           </button>
+        </div>
         </div>
       </fieldset>
 
@@ -584,6 +616,10 @@
       </button>
       <div class="space-y-1.5">
         <Label for="t-cmd">{t(app.language, "tunnel.commandLabel")}</Label>
+        <div class="max-w-[220px]">
+          <Label for="t-import-shell">{t(app.language, "tunnel.commandShell")}</Label>
+          <Select id="t-import-shell" value={commandShell} onValueChange={(shell) => (commandShell = shell as CommandShell)} options={commandShellOptions} />
+        </div>
         <textarea
           id="t-cmd"
           bind:value={cmdText}

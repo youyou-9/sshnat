@@ -21,12 +21,15 @@
   import TunnelCard from "@/lib/components/TunnelCard.svelte";
   import NewTunnelModal from "@/lib/components/NewTunnelModal.svelte";
   import TunnelLogsModal from "@/lib/components/TunnelLogsModal.svelte";
+  import { buildTunnelCliCommand, copyText, formatTunnelRoute } from "@/lib/tunnel-command";
   import {
     app,
     refreshTunnels,
     startTunnel,
     stopTunnel,
     deleteTunnel,
+    setAllTunnelsRunning,
+    errorMessage,
   } from "@/lib/state.svelte";
   import type { Tunnel } from "@/lib/api";
   import { t } from "@/lib/i18n";
@@ -43,6 +46,8 @@
 
   let batchOperating = $state(false);
   let copiedId = $state<string | null>(null);
+  let actionError = $state("");
+  const operating = $derived(batchOperating || Object.keys(app.tunnelBusy).length > 0);
 
   const runningCount = $derived(app.tunnels.filter((t) => t.running).length);
 
@@ -66,7 +71,12 @@
           String(t.targetPort).includes(q) ||
           String(t.remotePort).includes(q) ||
           String(t.socksPort).includes(q) ||
-          t.targetHost.toLowerCase().includes(q) ||
+          (t.localBindHost?.toLowerCase().includes(q) ?? false) ||
+          (t.localSocket?.toLowerCase().includes(q) ?? false) ||
+          (t.targetHost?.toLowerCase().includes(q) ?? false) ||
+          (t.targetSocket?.toLowerCase().includes(q) ?? false) ||
+          (t.remoteBindHost?.toLowerCase().includes(q) ?? false) ||
+          (t.remoteSocket?.toLowerCase().includes(q) ?? false) ||
           (host?.name.toLowerCase().includes(q) ?? false) ||
           (host?.host.toLowerCase().includes(q) ?? false)
         );
@@ -76,13 +86,7 @@
   });
 
   function formatRoute(t: Tunnel): string {
-    if (t.type === "L") {
-      return `${t.localSocket || `127.0.0.1:${t.localPort}`} → ${t.targetSocket || `${t.targetHost}:${t.targetPort}`}`;
-    }
-    if (t.type === "R") {
-      return `:${t.remotePort} ← ${t.targetHost}:${t.targetPort}`;
-    }
-    return `socks5://127.0.0.1:${t.socksPort}`;
+    return formatTunnelRoute(t);
   }
 
   function fmtBytes(n?: number): string {
@@ -101,55 +105,50 @@
     return app.hosts.find((h) => h.id === hostId)?.name ?? hostId;
   }
 
-  function copyCli(t: Tunnel) {
-    const host = app.hosts.find((h) => h.id === t.hostId);
-    const user = host ? host.user : "root";
-    const addr = host ? host.host : "host";
-    const port = host ? host.port : 22;
-    const authMethod = host?.auth?.method || "password";
-    const keyPath = host?.auth?.keyPath || "";
-
-    const parts = ["ssh"];
-    if (authMethod === "key" && keyPath) {
-      const safeKey = keyPath.includes(" ") ? `"${keyPath}"` : keyPath;
-      parts.push(`-i ${safeKey}`);
-    }
-    if (port && port !== 22) {
-      parts.push(`-p ${port}`);
-    }
-    parts.push("-N");
-
-    if (t.type === "L") {
-      parts.push(`-L ${t.localPort}:${t.targetHost || "127.0.0.1"}:${t.targetPort}`);
-    } else if (t.type === "R") {
-      const rb = t.remoteBindHost ? `${t.remoteBindHost}:` : "";
-      parts.push(`-R ${rb}${t.remotePort}:${t.targetHost || "127.0.0.1"}:${t.targetPort}`);
-    } else {
-      parts.push(`-D ${t.socksPort}`);
-    }
-
-    parts.push(`${user}@${addr}`);
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(parts.join(" "));
-      copiedId = t.id;
-      setTimeout(() => (copiedId = null), 1500);
+  async function copyCli(tunnel: Tunnel) {
+    const host = app.hosts.find((h) => h.id === tunnel.hostId);
+    try {
+      if (await copyText(buildTunnelCliCommand(tunnel, host, { hosts: app.hosts }))) {
+        copiedId = tunnel.id;
+        setTimeout(() => (copiedId = null), 1500);
+      } else actionError = t(app.language, "tunnel.copyError");
+    } catch (error) {
+      actionError = errorMessage(error);
     }
   }
 
   async function handleToggle(tunnel: Tunnel, checked: boolean) {
+    if (app.tunnelBusy[tunnel.id]) return;
+    actionError = "";
     try {
       if (checked) await startTunnel(tunnel.id);
       else await stopTunnel(tunnel.id);
-    } catch (e: any) {
-      tunnel.error = String(e?.message ?? e);
+    } catch (error) {
+      actionError = `${tunnel.name}: ${errorMessage(error)}`;
     }
   }
 
   async function handleDelete(id: string) {
+    if (app.tunnelBusy[id]) return;
     if (typeof window !== "undefined" && !window.confirm(t(app.language, "tunnel.deleteConfirm"))) {
       return;
     }
-    await deleteTunnel(id);
+    actionError = "";
+    try {
+      await deleteTunnel(id);
+    } catch (error) {
+      actionError = errorMessage(error);
+    }
+  }
+
+  async function handleRefresh() {
+    if (app.loading) return;
+    actionError = "";
+    try {
+      await refreshTunnels();
+    } catch (error) {
+      actionError = errorMessage(error);
+    }
   }
 
   function openEdit(t: Tunnel) {
@@ -163,18 +162,24 @@
   }
 
   async function startAll() {
+    if (operating) return;
     batchOperating = true;
+    actionError = "";
     try {
-      await Promise.all(app.tunnels.map((t) => (!t.running ? startTunnel(t.id) : Promise.resolve())));
+      const failures = await setAllTunnelsRunning(true);
+      actionError = failures.map((failure) => `${failure.name}: ${failure.error}`).join("\n");
     } finally {
       batchOperating = false;
     }
   }
 
   async function stopAll() {
+    if (operating) return;
     batchOperating = true;
+    actionError = "";
     try {
-      await Promise.all(app.tunnels.map((t) => (t.running ? stopTunnel(t.id) : Promise.resolve())));
+      const failures = await setAllTunnelsRunning(false);
+      actionError = failures.map((failure) => `${failure.name}: ${failure.error}`).join("\n");
     } finally {
       batchOperating = false;
     }
@@ -191,15 +196,16 @@
       </p>
     </div>
     <div class="flex items-center gap-2">
-      <Button variant="ghost" size="sm" disabled={batchOperating} onclick={startAll} title={t(app.language, "common.startAll")}>
+      <Button variant="ghost" size="sm" disabled={operating || runningCount === app.tunnels.length} onclick={startAll} title={t(app.language, "common.startAll")}>
         <Play size={12} class="mr-1 text-ok" /> {t(app.language, "common.startAll")}
       </Button>
-      <Button variant="ghost" size="sm" disabled={batchOperating} onclick={stopAll} title={t(app.language, "common.stopAll")}>
+      <Button variant="ghost" size="sm" disabled={operating || runningCount === 0} onclick={stopAll} title={t(app.language, "common.stopAll")}>
         <Square size={12} class="mr-1 text-bad" /> {t(app.language, "common.stopAll")}
       </Button>
       <button
         class="flex items-center gap-1 rounded border border-edge bg-panel px-2.5 py-1 text-xs text-dim transition-colors hover:text-ink hover:bg-hover"
-        onclick={() => refreshTunnels()}
+        onclick={handleRefresh}
+        disabled={app.loading || operating}
         title={t(app.language, "tunnels.refresh")}
       >
         <RefreshCw size={12} />
@@ -211,6 +217,9 @@
       </Button>
     </div>
   </header>
+  {#if actionError}
+    <p role="alert" class="m-3 whitespace-pre-wrap rounded-chip border border-bad/40 bg-bad/10 px-3 py-2 text-xs text-bad">{actionError}</p>
+  {/if}
 
   <!-- 工具栏：搜索、分类、视图切换 -->
   <div class="flex flex-wrap items-center justify-between gap-3 border-b border-edge/60 bg-base/50 px-5 py-2.5">
@@ -321,8 +330,8 @@
       </div>
     {:else}
       <!-- 紧凑表格/行列表视图 -->
-      <div class="rounded-card border border-edge bg-panel overflow-hidden">
-        <table class="w-full text-left text-xs">
+      <div class="rounded-card border border-edge bg-panel overflow-x-auto">
+        <table class="w-full min-w-[850px] text-left text-xs">
           <thead class="border-b border-edge bg-base/70 text-[11px] uppercase tracking-wider text-dim">
             <tr>
               <th class="px-4 py-2.5 font-medium">{t(app.language, "tunnels.colStatus")}</th>
@@ -331,39 +340,44 @@
               <th class="px-3 py-2.5 font-medium">{t(app.language, "tunnels.colRoute")}</th>
               <th class="px-3 py-2.5 font-medium">{t(app.language, "tunnels.colHost")}</th>
               <th class="px-3 py-2.5 font-medium">{t(app.language, "tunnels.colTraffic")}</th>
-              <th class="px-4 py-2.5 font-medium text-right">{t(app.language, "tunnels.colActions")}</th>
+              <th class="sticky right-0 z-10 border-l border-edge bg-panel px-4 py-2.5 font-medium text-right">{t(app.language, "tunnels.colActions")}</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-edge/60 font-mono">
-            {#each filteredTunnels as t (t.id)}
+            {#each filteredTunnels as tunnel (tunnel.id)}
               <tr class="hover:bg-hover/60 transition-colors">
                 <td class="px-4 py-2.5">
                   <div class="flex items-center gap-2">
                     <Switch
-                      checked={t.running}
-                      onCheckedChange={(checked) => handleToggle(t, checked)}
+                      checked={tunnel.running}
+                      disabled={!!app.tunnelBusy[tunnel.id]}
+                      aria-label={`${t(app.language, "tunnel.toggle")}: ${tunnel.name}`}
+                      onCheckedChange={(checked) => handleToggle(tunnel, checked)}
                     />
-                    <span class={`size-2 rounded-full ${t.status === 'connected' ? 'bg-ok' : t.status === 'reconnecting' ? 'bg-warn animate-pulse' : 'bg-dim/40'}`}></span>
+                    <span class={`size-2 rounded-full ${tunnel.status === 'connected' ? 'bg-ok' : tunnel.status === 'reconnecting' ? 'bg-warn animate-pulse' : 'bg-dim/40'}`}></span>
                   </div>
                 </td>
                 <td class="px-3 py-2.5">
-                  <Badge tone={t.type === 'L' ? 'accent' : t.type === 'R' ? 'warn' : 'ok'} mono>
-                    -{t.type}
+                  <Badge tone={tunnel.type === 'L' ? 'accent' : tunnel.type === 'R' ? 'warn' : 'ok'} mono>
+                    -{tunnel.type}
                   </Badge>
                 </td>
-                <td class="px-3 py-2.5 font-sans font-medium text-ink">
-                  {t.name}
+                <td class="min-w-36 max-w-56 break-words px-3 py-2.5 font-sans font-medium text-ink">
+                  {tunnel.name}
+                  {#if app.tunnelOperationErrors[tunnel.id] || tunnel.error}
+                    <div class="mt-1 max-w-[280px] whitespace-normal break-words text-[11px] text-bad">{app.tunnelOperationErrors[tunnel.id] || tunnel.error}</div>
+                  {/if}
                 </td>
-                <td class="px-3 py-2.5 text-dim">
-                  {formatRoute(t)}
+                <td class="min-w-56 max-w-80 break-all px-3 py-2.5 text-dim">
+                  {formatRoute(tunnel)}
                 </td>
-                <td class="px-3 py-2.5 text-dim/80 font-sans">
-                  {getHostName(t.hostId)}
+                <td class="min-w-24 max-w-44 break-words px-3 py-2.5 text-dim/80 font-sans">
+                  {getHostName(tunnel.hostId)}
                 </td>
-                <td class="px-3 py-2.5 text-dim">
-                  ↑{fmtBytes(t.stats?.tx)} · ↓{fmtBytes(t.stats?.rx)}
+                <td class="whitespace-nowrap px-3 py-2.5 text-dim">
+                  ↑{fmtBytes(tunnel.stats?.tx)} · ↓{fmtBytes(tunnel.stats?.rx)}
                 </td>
-                <td class="px-4 py-2.5 text-right font-sans">
+                <td class="sticky right-0 z-10 border-l border-edge bg-panel px-4 py-2.5 text-right font-sans">
                   <div class="inline-flex items-center gap-1">
                     <Button
                       variant="ghost"
@@ -371,7 +385,7 @@
                       class="size-7"
                       aria-label={t(app.language, "tunnel.viewLogs")}
                       title={t(app.language, "tunnel.viewLogs")}
-                      onclick={() => openLogs(t)}
+                      onclick={() => openLogs(tunnel)}
                     >
                       <ScrollText size={13} class="text-accent" />
                     </Button>
@@ -381,9 +395,9 @@
                       class="size-7"
                       aria-label={t(app.language, "tunnel.copyCli")}
                       title={t(app.language, "tunnel.copyCli")}
-                      onclick={() => copyCli(t)}
+                      onclick={() => copyCli(tunnel)}
                     >
-                      {#if copiedId === t.id}
+                      {#if copiedId === tunnel.id}
                         <Check size={13} class="text-ok" />
                       {:else}
                         <Copy size={13} />
@@ -395,7 +409,8 @@
                       class="size-7"
                       aria-label={t(app.language, "tunnel.edit")}
                       title={t(app.language, "tunnel.edit")}
-                      onclick={() => openEdit(t)}
+                      disabled={!!app.tunnelBusy[tunnel.id]}
+                      onclick={() => openEdit(tunnel)}
                     >
                       <Pencil size={13} />
                     </Button>
@@ -405,7 +420,8 @@
                       class="size-7 text-bad/70 hover:text-bad"
                       aria-label={t(app.language, "hosts.delete")}
                       title={t(app.language, "hosts.delete")}
-                      onclick={() => handleDelete(t.id)}
+                      disabled={!!app.tunnelBusy[tunnel.id]}
+                      onclick={() => handleDelete(tunnel.id)}
                     >
                       <Trash2 size={13} />
                     </Button>

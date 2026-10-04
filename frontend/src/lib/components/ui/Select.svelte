@@ -10,6 +10,7 @@
     options = [] as Option[],
     placeholder = "Select…",
     disabled = false,
+    id,
     class: className = "",
     onValueChange,
   }: {
@@ -17,6 +18,7 @@
     options?: Option[];
     placeholder?: string;
     disabled?: boolean;
+    id?: string;
     class?: string;
     onValueChange?: (val: string) => void;
   } = $props();
@@ -32,6 +34,7 @@
   }}
 >
   <SelectPrimitive.Trigger
+    {id}
     class={`flex h-8 w-full items-center justify-between rounded-chip border border-edge bg-base
             px-2.5 text-sm transition-colors hover:border-dim/50
             focus:outline-none focus:border-accent disabled:opacity-50 ${className}`}

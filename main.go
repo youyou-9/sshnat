@@ -6,6 +6,7 @@ import (
 	"log"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/sshnat/sshnat/core/config"
 	"github.com/sshnat/sshnat/core/stats"
 	"github.com/sshnat/sshnat/core/supervisor"
+	"github.com/sshnat/sshnat/internal/version"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -48,7 +50,7 @@ func main() {
 	// ---- Wails 装配 ----
 	var window *application.WebviewWindow
 	wailsApp := application.New(application.Options{
-		Name:        "SSHNat",
+		Name:        version.Name,
 		Description: "SSH port forwarding client",
 		Services: []application.Service{
 			application.NewService(services.TunnelService()),
@@ -140,7 +142,7 @@ func main() {
 					if isRunning {
 						go sup.Stop(tunID)
 					} else {
-						go sup.Start(tunID)
+						go services.TunnelService().Start(tunID)
 					}
 				})
 			}
@@ -158,7 +160,7 @@ func main() {
 			if err == nil {
 				for _, t := range cur.Tunnels {
 					recordTunnelUsage(t.ID)
-					_ = sup.Start(t.ID)
+					_ = services.TunnelService().Start(t.ID)
 				}
 			}
 		})
@@ -167,7 +169,9 @@ func main() {
 		})
 		menu.AddSeparator()
 		menu.Add("打开配置目录").OnClick(func(*application.Context) {
-			_ = exec.Command("explorer", filepath.Dir(cfgPath)).Start()
+			if err := openConfigDir(filepath.Dir(cfgPath)); err != nil {
+				log.Printf("open config directory: %v", err)
+			}
 		})
 		menu.AddSeparator()
 		menu.Add("退出").OnClick(func(*application.Context) {
@@ -207,20 +211,24 @@ func main() {
 	for _, tun := range settings.Tunnels {
 		if tun.AutoStart {
 			recordTunnelUsage(tun.ID)
-			if err := sup.Start(tun.ID); err != nil {
+			if err := services.TunnelService().Start(tun.ID); err != nil {
 				log.Printf("autostart tunnel %s: %v", tun.ID, err)
 			}
 		}
 	}
 
 	window = wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:            "SSHNat v1.0.0",
+		Title:            fmt.Sprintf("%s v%s", version.Name, version.Current()),
 		Width:            1280,
 		Height:           800,
 		MinWidth:         960,
 		MinHeight:        600,
 		BackgroundColour: application.NewRGB(0x0D, 0x11, 0x17),
 		URL:              "/",
+	})
+	services.SetExportChooser(func() (string, error) {
+		return wailsApp.Dialog.SaveFile().SetFilename("sshnat-backup.json").
+			AddFilter("JSON configuration", "*.json").AttachToWindow(window).PromptForSingleSelection()
 	})
 
 	// Closing the window hides it instead of destroying the Wails application.
@@ -239,5 +247,19 @@ func main() {
 
 	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// openConfigDir opens the directory containing the active configuration with
+// the platform's default file manager. Keeping this behind a small helper
+// avoids invoking the Windows-only explorer command on Unix and macOS builds.
+func openConfigDir(dir string) error {
+	switch runtime.GOOS {
+	case "windows":
+		return exec.Command("explorer.exe", dir).Start()
+	case "darwin":
+		return exec.Command("open", dir).Start()
+	default:
+		return exec.Command("xdg-open", dir).Start()
 	}
 }

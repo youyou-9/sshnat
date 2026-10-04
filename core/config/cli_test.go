@@ -44,6 +44,30 @@ func TestParseSSHCommandDynamicAndJumps(t *testing.T) {
 	}
 }
 
+func TestSpecToSettingsWithJumpsPreservesProxyJumpTopology(t *testing.T) {
+	spec, err := ParseSSHCommand([]string{
+		"-i", "~/.ssh/id_ed25519",
+		"-J", "jump-user@jump.example:2200,[2001:db8::2]:2201",
+		"root@target.example",
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	target, jumps, _, err := SpecToSettingsWithJumps(spec)
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if len(jumps) != 2 || len(target.JumpHostIDs) != 2 {
+		t.Fatalf("jump topology missing: target=%+v jumps=%+v", target, jumps)
+	}
+	if jumps[0].User != "jump-user" || jumps[0].Host != "jump.example" || jumps[0].Port != 2200 {
+		t.Fatalf("bad first jump: %+v", jumps[0])
+	}
+	if jumps[1].Host != "2001:db8::2" || jumps[1].Port != 2201 || jumps[1].Auth.KeyPath != "~/.ssh/id_ed25519" {
+		t.Fatalf("bad IPv6 jump: %+v", jumps[1])
+	}
+}
+
 func TestParseSSHCommandErrors(t *testing.T) {
 	for _, args := range [][]string{
 		{"-L", "notaport:x:1", "h"},
@@ -67,6 +91,78 @@ func TestParseSSHCommandAcceptsProgramName(t *testing.T) {
 	}
 	if spec.Hostname != "host" || spec.User != "alice" || len(spec.Forwards) != 1 {
 		t.Fatalf("unexpected spec: %+v", spec)
+	}
+}
+
+func TestParseSSHCommandAcceptsAttachedValues(t *testing.T) {
+	spec, err := ParseSSHCommand([]string{"-p2222", "-L8080:db:80", "-D1080", "alice@host"})
+	if err != nil {
+		t.Fatalf("parse compact command: %v", err)
+	}
+	if spec.Port != 2222 || len(spec.Forwards) != 2 || spec.Forwards[0].BindPort != 8080 || spec.Forwards[1].BindPort != 1080 {
+		t.Fatalf("compact values were not parsed: %+v", spec)
+	}
+}
+
+func TestParseSSHCommandUnixSocketForwarding(t *testing.T) {
+	spec, err := ParseSSHCommand([]string{
+		"-L", "/tmp/local.sock:/run/service.sock",
+		"-R", "/tmp/remote.sock:/tmp/local.sock",
+		"root@host",
+	})
+	if err != nil {
+		t.Fatalf("parse unix forwarding: %v", err)
+	}
+	if len(spec.Forwards) != 2 {
+		t.Fatalf("expected 2 forwards, got %d", len(spec.Forwards))
+	}
+	if spec.Forwards[0].Socket != "/tmp/local.sock" || spec.Forwards[0].TargetSocket != "/run/service.sock" {
+		t.Fatalf("bad local unix forward: %+v", spec.Forwards[0])
+	}
+	if spec.Forwards[1].Socket != "/tmp/remote.sock" || spec.Forwards[1].TargetSocket != "/tmp/local.sock" {
+		t.Fatalf("bad remote unix forward: %+v", spec.Forwards[1])
+	}
+	_, tunnels := SpecToSettings(spec)
+	if tunnels[0].LocalSocket != "/tmp/local.sock" || tunnels[0].TargetSocket != "/run/service.sock" {
+		t.Fatalf("bad local tunnel mapping: %+v", tunnels[0])
+	}
+	if tunnels[1].RemoteSocket != "/tmp/remote.sock" || tunnels[1].TargetSocket != "/tmp/local.sock" {
+		t.Fatalf("bad remote tunnel mapping: %+v", tunnels[1])
+	}
+}
+
+func TestParseSSHCommandUnixListenerToTCPTarget(t *testing.T) {
+	spec, err := ParseSSHCommand([]string{"-L", "/tmp/local.sock:db.internal:3306", "root@host"})
+	if err != nil {
+		t.Fatalf("parse unix-to-tcp forwarding: %v", err)
+	}
+	if len(spec.Forwards) != 1 {
+		t.Fatalf("expected one forward, got %d", len(spec.Forwards))
+	}
+	f := spec.Forwards[0]
+	if f.Socket != "/tmp/local.sock" || f.TargetHost != "db.internal" || f.TargetPort != 3306 || f.TargetSocket != "" {
+		t.Fatalf("unexpected unix-to-tcp forward: %+v", f)
+	}
+}
+
+func TestParseSSHCommandTCPListenerToUnixTarget(t *testing.T) {
+	spec, err := ParseSSHCommand([]string{
+		"-L", "8080:/run/service.sock",
+		"-R", "127.0.0.1:9000:/tmp/target.sock",
+		"root@host",
+	})
+	if err != nil {
+		t.Fatalf("parse tcp-to-unix forwarding: %v", err)
+	}
+	if len(spec.Forwards) != 2 {
+		t.Fatalf("expected two forwards, got %d", len(spec.Forwards))
+	}
+	local, remote := spec.Forwards[0], spec.Forwards[1]
+	if local.BindPort != 8080 || local.TargetSocket != "/run/service.sock" || local.Socket != "" {
+		t.Fatalf("unexpected local tcp-to-unix forward: %+v", local)
+	}
+	if remote.BindHost != "127.0.0.1" || remote.BindPort != 9000 || remote.TargetSocket != "/tmp/target.sock" || remote.Socket != "" {
+		t.Fatalf("unexpected remote tcp-to-unix forward: %+v", remote)
 	}
 }
 

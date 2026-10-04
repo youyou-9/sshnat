@@ -34,7 +34,7 @@ vi.mock("./api", () => ({
   },
 }));
 
-import { app, initApp, setLanguage, refreshTunnels, refreshHosts, deleteTunnel } from "./state.svelte";
+import { app, initApp, setLanguage, deleteTunnel, startTunnel, stopTunnel, setAllTunnelsRunning } from "./state.svelte";
 import { EV, TunnelService } from "./api";
 
 describe("Frontend Global State & Event Handling", () => {
@@ -46,6 +46,9 @@ describe("Frontend Global State & Event Handling", () => {
     app.rxHistory = {};
     app.totalTx = 0;
     app.totalRx = 0;
+    app.tunnelBusy = {};
+    app.tunnelOperationErrors = {};
+    vi.clearAllMocks();
   });
 
   it("sets language and updates localStorage", () => {
@@ -176,5 +179,73 @@ describe("Frontend Global State & Event Handling", () => {
     expect(TunnelService.Delete).toHaveBeenCalledWith("del-tnl");
     expect(app.txHistory["del-tnl"]).toBeUndefined();
     expect(app.rxHistory["del-tnl"]).toBeUndefined();
+  });
+
+  it("coalesces repeated start clicks while a tunnel RPC is pending", async () => {
+    let finish!: () => void;
+    vi.mocked(TunnelService.Start).mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }) as any);
+    app.tunnels = [{ id: "t1", name: "one", running: false, status: "stopped", error: "" } as any];
+
+    const first = startTunnel("t1");
+    const second = startTunnel("t1");
+    await Promise.resolve();
+    expect(app.tunnelBusy.t1).toBe(true);
+    expect(TunnelService.Start).toHaveBeenCalledTimes(1);
+    finish();
+    await Promise.all([first, second]);
+    expect(app.tunnelBusy.t1).toBeUndefined();
+    expect(app.tunnels[0].running).toBe(true);
+    expect(app.tunnels[0].status).toBe("starting");
+  });
+
+  it("preserves a backend failure event that arrives before Start resolves", async () => {
+    const cleanup = await initApp();
+    app.tunnels = [{ id: "t1", name: "one", running: false, status: "stopped", error: "" } as any];
+    vi.mocked(TunnelService.Start).mockImplementationOnce(() => {
+      listeners[EV.tunnelStatus]({ data: { tunnelId: "t1", status: "error", error: "authentication failed" } });
+      return Promise.resolve() as ReturnType<typeof TunnelService.Start>;
+    });
+    await startTunnel("t1");
+    expect(app.tunnels[0].running).toBe(false);
+    expect(app.tunnels[0].status).toBe("error");
+    expect(app.tunnels[0].error).toBe("authentication failed");
+    cleanup();
+  });
+
+  it("waits for every batch operation and exposes failed tunnels while successful ones update", async () => {
+    app.tunnels = [
+      { id: "ok", name: "healthy", running: false, status: "stopped", error: "" } as any,
+      { id: "bad", name: "broken", running: false, status: "stopped", error: "" } as any,
+    ];
+    vi.mocked(TunnelService.Start).mockImplementation((id) => id === "bad"
+      ? Promise.reject(new Error("host unavailable")) as any
+      : Promise.resolve() as any);
+    const failures = await setAllTunnelsRunning(true);
+    expect(failures).toEqual([{ id: "bad", name: "broken", error: "host unavailable" }]);
+    expect(app.tunnels[0].running).toBe(true);
+    expect(app.tunnels[1].running).toBe(false);
+    expect(app.tunnelOperationErrors.bad).toBe("host unavailable");
+    expect(Object.keys(app.tunnelBusy)).toEqual([]);
+    vi.mocked(TunnelService.Start).mockResolvedValue(undefined);
+  });
+
+  it("keeps failed stop/delete state intact and releases controls for retry", async () => {
+    app.tunnels = [{ id: "t1", name: "one", running: true, status: "connected", error: "" } as any];
+    app.txHistory.t1 = [100];
+    vi.mocked(TunnelService.Stop).mockRejectedValueOnce(new Error("stop timed out"));
+    await expect(stopTunnel("t1")).rejects.toThrow("stop timed out");
+    expect(app.tunnels[0].running).toBe(true);
+    expect(app.txHistory.t1).toEqual([100]);
+    expect(app.tunnelOperationErrors.t1).toBe("stop timed out");
+    expect(app.tunnelBusy.t1).toBeUndefined();
+
+    vi.mocked(TunnelService.Delete).mockRejectedValueOnce(new Error("config is read-only"));
+    await expect(deleteTunnel("t1")).rejects.toThrow("config is read-only");
+    expect(app.tunnels).toHaveLength(1);
+    expect(app.txHistory.t1).toEqual([100]);
+    await stopTunnel("t1");
+    expect(app.tunnels[0].running).toBe(false);
+    expect(app.txHistory.t1).toEqual([]);
+    expect(app.tunnelOperationErrors.t1).toBeUndefined();
   });
 });

@@ -6,13 +6,13 @@
 name: "sshnat"
 arch: ${GOARCH}
 platform: "linux"
-version: "0.1.0"
+version: "1.0.0"
 section: "default"
 priority: "extra"
-maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
+maintainer: "SSHNat contributors"
 description: "SSH port forwarding client"
 vendor: "SSHNat"
-homepage: "https://github.com/sshnat/sshnat"
+homepage: "https://github.com/youyou-9/sshnat"
 license: "MIT"
 release: "1"
 
@@ -21,7 +21,7 @@ contents:
     dst: "/usr/local/bin/sshnat"
   - src: "./build/appicon.png"
     dst: "/usr/share/icons/hicolor/128x128/apps/sshnat.png"
-  - src: "./build/linux/desktop"
+  - src: "./build/linux/sshnat.desktop"
     dst: "/usr/share/applications/sshnat.desktop"
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)

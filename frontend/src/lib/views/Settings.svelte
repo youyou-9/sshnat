@@ -3,9 +3,11 @@
   import { SettingsService, type AppInfo } from "@/lib/api";
   import Badge from "@/lib/components/ui/Badge.svelte";
   import Select from "@/lib/components/ui/Select.svelte";
-  import { app, setTheme } from "@/lib/state.svelte";
+  import { app, setTheme, setLanguage } from "@/lib/state.svelte";
   import { t } from "@/lib/i18n";
-  import { applyTheme, type ThemeMode } from "@/lib/theme";
+  import { type ThemeMode } from "@/lib/theme";
+  import { type Locale } from "@/lib/i18n";
+  import ConfigTransfer from "@/lib/components/ConfigTransfer.svelte";
 
   let info = $state<AppInfo | null>(null);
   const languageOptions = $derived([
@@ -18,8 +20,6 @@
     { value: "light", label: t(app.language, "settings.themeLight") },
   ]);
   $effect(() => { SettingsService.Get().then((v: any) => (info = v)).catch(() => {}); });
-  $effect(() => { if (typeof localStorage !== "undefined") localStorage.setItem("sshnat.language", app.language); });
-  $effect(() => { applyTheme(app.theme); });
 </script>
 
 <div class="flex h-full flex-col">
@@ -30,13 +30,14 @@
         <div class="mb-3 flex items-center gap-2"><SunMoon size={15} class="text-dim" /><span class="text-sm font-medium text-ink">{t(app.language, "settings.theme")}</span></div>
         <div class="flex items-center justify-between gap-4">
           <div><p class="text-sm text-ink">{t(app.language, "settings.theme")}</p><p class="text-xs text-dim">{t(app.language, "settings.themeHint")}</p></div>
-          <div class="w-36"><Select bind:value={app.theme} options={themeOptions} /></div>
+          <div class="w-36"><Select value={app.theme} options={themeOptions} onValueChange={(v) => setTheme(v as ThemeMode)} /></div>
         </div>
       </div>
       <div class="rounded-card border border-edge bg-panel p-4">
         <div class="mb-3 flex items-center gap-2"><Languages size={15} class="text-dim" /><span class="text-sm font-medium text-ink">{t(app.language, "settings.language")}</span></div>
-        <div class="flex items-center justify-between gap-4"><div><p class="text-sm text-ink">{t(app.language, "settings.language")}</p><p class="text-xs text-dim">{t(app.language, "settings.languageHint")}</p></div><div class="w-36"><Select bind:value={app.language} options={languageOptions} /></div></div>
+        <div class="flex items-center justify-between gap-4"><div><p class="text-sm text-ink">{t(app.language, "settings.language")}</p><p class="text-xs text-dim">{t(app.language, "settings.languageHint")}</p></div><div class="w-36"><Select value={app.language} options={languageOptions} onValueChange={(v) => setLanguage(v as Locale)} /></div></div>
       </div>
+      <ConfigTransfer />
       <div class="rounded-card border border-edge bg-panel p-4">
         <div class="mb-3 flex items-center gap-2"><MonitorCog size={15} class="text-dim" /><span class="text-sm font-medium text-ink">{t(app.language, "settings.tray")}</span></div>
         <div class="flex items-start gap-3"><div class="mt-0.5 rounded-chip bg-ok/10 p-1.5 text-ok"><MonitorCog size={14} /></div><div><p class="text-sm text-ink">{t(app.language, "settings.trayEnabled")}</p><p class="mt-1 text-xs leading-5 text-dim">{t(app.language, "settings.trayHint")}</p></div></div>

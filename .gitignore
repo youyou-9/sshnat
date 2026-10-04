@@ -21,4 +21,6 @@ build/android/gen/
 # 辅助工具与 Agent 缓存
 .pi/
 .agents/
+.playwright-cli/
+output/playwright/
 

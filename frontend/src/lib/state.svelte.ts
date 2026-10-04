@@ -16,6 +16,7 @@ export type Page = "dashboard" | "hosts" | "tunnels" | "logs" | "settings";
 export type LogEntry = { id: number; time: string; message: string; tunnelId?: string };
 
 let logIdSeq = 0;
+const statusEventRevisions = new Map<string, number>();
 
 export const app = $state({
   page: "dashboard" as Page,
@@ -24,6 +25,8 @@ export const app = $state({
   tunnels: [] as Tunnel[],
   hosts: [] as Host[],
   loading: false,
+  tunnelBusy: {} as Record<string, boolean>,
+  tunnelOperationErrors: {} as Record<string, string>,
 
   // 每隧道 sparkline 历史（最近 60 个采样点的 tx/rx 增量）。
   txHistory: {} as Record<string, number[]>,
@@ -39,13 +42,27 @@ export const app = $state({
 });
 
 function loadLanguage(): Locale {
-  if (typeof localStorage === "undefined") return "zh";
-  return localStorage.getItem("sshnat.language") === "en" ? "en" : "zh";
+  const storage = getStorage();
+  return storage?.getItem("sshnat.language") === "en" ? "en" : "zh";
 }
 
 export function setLanguage(language: Locale) {
   app.language = language;
-  if (typeof localStorage !== "undefined") localStorage.setItem("sshnat.language", language);
+  if (typeof document !== "undefined") document.documentElement.lang = language === "en" ? "en" : "zh-CN";
+  getStorage()?.setItem("sshnat.language", language);
+}
+
+/** Browsers provide Storage, while SSR and some test runners expose a partial global. */
+function getStorage(): Storage | undefined {
+  const candidate = (globalThis as { localStorage?: unknown }).localStorage;
+  if (
+    candidate &&
+    typeof (candidate as Storage).getItem === "function" &&
+    typeof (candidate as Storage).setItem === "function"
+  ) {
+    return candidate as Storage;
+  }
+  return undefined;
 }
 
 export function setTheme(mode: ThemeMode) {
@@ -80,6 +97,7 @@ function recalculateTotalRates() {
 
 /** 初始化事件订阅并拉取首屏数据。返回清理函数。 */
 export async function initApp(): Promise<() => void> {
+  if (typeof document !== "undefined") document.documentElement.lang = app.language === "en" ? "en" : "zh-CN";
   // 确保主题立即挂载到 DOM
   applyTheme(app.theme);
 
@@ -90,6 +108,7 @@ export async function initApp(): Promise<() => void> {
     const d: StatusEvent = Array.isArray(ev?.data) ? ev.data[0] : (ev?.data ?? ev);
     const t = app.tunnels.find((x) => x.id === d.tunnelId);
     if (!t) return;
+    statusEventRevisions.set(d.tunnelId, (statusEventRevisions.get(d.tunnelId) ?? 0) + 1);
     t.status = d.status;
     t.running = d.status !== "stopped" && d.status !== "error";
     t.error = d.error ?? "";
@@ -153,17 +172,74 @@ export async function refreshHosts() {
   app.hosts = (await HostService.List()) ?? [];
 }
 
-export async function startTunnel(id: string) {
-  await TunnelService.Start(id);
+const pendingTunnelOperations = new Map<string, Promise<void>>();
+
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
-export async function stopTunnel(id: string) {
-  await TunnelService.Stop(id);
+function runTunnelOperation(id: string, operation: () => Promise<void>): Promise<void> {
+  const pending = pendingTunnelOperations.get(id);
+  if (pending) return pending;
+  app.tunnelBusy[id] = true;
+  delete app.tunnelOperationErrors[id];
+  const task = Promise.resolve().then(operation).catch((error: unknown) => {
+    app.tunnelOperationErrors[id] = errorMessage(error);
+    throw error;
+  }).finally(() => {
+    pendingTunnelOperations.delete(id);
+    delete app.tunnelBusy[id];
+  });
+  pendingTunnelOperations.set(id, task);
+  return task;
 }
 
-export async function deleteTunnel(id: string) {
-  await TunnelService.Delete(id);
-  delete app.txHistory[id];
-  delete app.rxHistory[id];
-  await refreshTunnels();
+export function startTunnel(id: string): Promise<void> {
+  return runTunnelOperation(id, async () => {
+    const eventRevision = statusEventRevisions.get(id) ?? 0;
+    await TunnelService.Start(id);
+    const tunnel = app.tunnels.find((entry) => entry.id === id);
+    if (tunnel && (statusEventRevisions.get(id) ?? 0) === eventRevision) {
+      tunnel.running = true;
+      if (tunnel.status === "stopped" || tunnel.status === "error") tunnel.status = "starting";
+      tunnel.error = "";
+    }
+  });
+}
+
+export function stopTunnel(id: string): Promise<void> {
+  return runTunnelOperation(id, async () => {
+    await TunnelService.Stop(id);
+    const tunnel = app.tunnels.find((entry) => entry.id === id);
+    if (tunnel) {
+      tunnel.running = false;
+      tunnel.status = "stopped";
+      tunnel.error = "";
+    }
+    app.txHistory[id] = [];
+    app.rxHistory[id] = [];
+    recalculateTotalRates();
+  });
+}
+
+export function deleteTunnel(id: string): Promise<void> {
+  return runTunnelOperation(id, async () => {
+    await TunnelService.Delete(id);
+    app.tunnels = app.tunnels.filter((entry) => entry.id !== id);
+    delete app.txHistory[id];
+    delete app.rxHistory[id];
+    statusEventRevisions.delete(id);
+    recalculateTotalRates();
+  });
+}
+
+export type TunnelOperationFailure = { id: string; name: string; error: string };
+
+/** Wait for every operation, keeping each failure visible alongside its tunnel. */
+export async function setAllTunnelsRunning(running: boolean): Promise<TunnelOperationFailure[]> {
+  const targets = app.tunnels.filter((tunnel) => tunnel.running !== running);
+  const results = await Promise.allSettled(targets.map((tunnel) => running ? startTunnel(tunnel.id) : stopTunnel(tunnel.id)));
+  return results.flatMap((result, index) => result.status === "rejected"
+    ? [{ id: targets[index].id, name: targets[index].name, error: errorMessage(result.reason) }]
+    : []);
 }

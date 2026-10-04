@@ -20,23 +20,37 @@ import (
 
 // mockRemoteSSHServer 模拟支持 tcpip-forward 和 forwarded-tcpip 的 SSH 服务端。
 type mockRemoteSSHServer struct {
-	ln       net.Listener
-	password string
+	ln           net.Listener
+	password     string
+	ignoreCancel bool
+	ignoreListen bool
+	listenSeen   chan struct{}
 
 	mu        sync.Mutex
 	listeners map[string]net.Listener
 }
 
 func startMockRemoteSSHServer(t *testing.T, password string) *mockRemoteSSHServer {
+	return startMockRemoteSSHServerWithCancel(t, password, false)
+}
+
+func startMockRemoteSSHServerWithCancel(t *testing.T, password string, ignoreCancel bool) *mockRemoteSSHServer {
+	return startMockRemoteSSHServerWithBehavior(t, password, ignoreCancel, false)
+}
+
+func startMockRemoteSSHServerWithBehavior(t *testing.T, password string, ignoreCancel, ignoreListen bool) *mockRemoteSSHServer {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	s := &mockRemoteSSHServer{
-		ln:        ln,
-		password:  password,
-		listeners: make(map[string]net.Listener),
+		ln:           ln,
+		password:     password,
+		ignoreCancel: ignoreCancel,
+		ignoreListen: ignoreListen,
+		listenSeen:   make(chan struct{}),
+		listeners:    make(map[string]net.Listener),
 	}
 	go s.serve(t)
 	t.Cleanup(func() {
@@ -97,6 +111,10 @@ func (s *mockRemoteSSHServer) handle(conn net.Conn, t *testing.T) {
 	for req := range reqs {
 		switch req.Type {
 		case "tcpip-forward":
+			if s.ignoreListen {
+				close(s.listenSeen)
+				continue
+			}
 			var payload struct {
 				Addr string
 				Port uint32
@@ -179,7 +197,9 @@ func (s *mockRemoteSSHServer) handle(conn net.Conn, t *testing.T) {
 			}(boundLn, boundPort)
 
 		case "cancel-tcpip-forward":
-			_ = req.Reply(true, nil)
+			if !s.ignoreCancel {
+				_ = req.Reply(true, nil)
+			}
 		default:
 			if req.WantReply {
 				_ = req.Reply(false, nil)
@@ -273,5 +293,74 @@ func TestRemoteForwardEndToEnd(t *testing.T) {
 
 	if err := fw.Stop(); err != nil {
 		t.Fatalf("stop: %v", err)
+	}
+}
+
+func TestRemoteStopInterruptsUnansweredCancellation(t *testing.T) {
+	srv := startMockRemoteSSHServerWithCancel(t, "secret", true)
+	client, err := ssh.Dial(t.Context(), ssh.DialOptions{
+		Host: hostOf(srv.addr()), Port: portOf(srv.addr()), User: "testuser",
+		Auth:           ssh.AuthConfig{Type: ssh.AuthPassword, Password: "secret"},
+		KnownHostsFile: filepath.Join(t.TempDir(), "known_hosts"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	fw := forward.NewRemote(client, forward.RemoteConfig{BindHost: "127.0.0.1", BindPort: pickFreePort(t), TargetAddr: "127.0.0.1:1"}, stats.NewRegistry().Get("cancel"))
+	if err := fw.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- fw.Stop() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		client.Close()
+		t.Fatal("Remote.Stop hung waiting for cancellation reply")
+	}
+	select {
+	case <-fw.Done():
+	default:
+		t.Fatal("Remote.Stop returned before workers finished")
+	}
+}
+
+func TestRemoteStopDuringUnansweredStartup(t *testing.T) {
+	srv := startMockRemoteSSHServerWithBehavior(t, "secret", false, true)
+	client, err := ssh.Dial(t.Context(), ssh.DialOptions{
+		Host: hostOf(srv.addr()), Port: portOf(srv.addr()), User: "testuser",
+		Auth:           ssh.AuthConfig{Type: ssh.AuthPassword, Password: "secret"},
+		KnownHostsFile: filepath.Join(t.TempDir(), "known_hosts"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	fw := forward.NewRemote(client, forward.RemoteConfig{BindHost: "127.0.0.1", BindPort: pickFreePort(t), TargetAddr: "127.0.0.1:1"}, stats.NewRegistry().Get("startup"))
+	started := make(chan error, 1)
+	go func() { started <- fw.Start() }()
+	select {
+	case <-srv.listenSeen:
+	case <-time.After(time.Second):
+		client.Close()
+		t.Fatal("remote listen request was never sent")
+	}
+	stopped := make(chan error, 1)
+	go func() { stopped <- fw.Stop() }()
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		client.Close()
+		t.Fatal("Stop could not interrupt pending remote Start")
+	}
+	if err := <-started; err == nil {
+		t.Fatal("Start unexpectedly succeeded after Stop")
 	}
 }

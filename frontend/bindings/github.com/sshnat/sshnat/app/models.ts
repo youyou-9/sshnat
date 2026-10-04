@@ -14,6 +14,12 @@ export interface AppInfo {
     "configPath": string;
 }
 
+export interface ConfigImportResult {
+    "hostsAdded": number;
+    "tunnelsAdded": number;
+    "backupPath"?: string;
+}
+
 /**
  * CreateTunnelRequest 是 New Tunnel 弹窗的提交载荷。
  */
@@ -33,8 +39,22 @@ export interface CreateTunnelRequest {
     "targetSocket"?: string;
     "remoteBindHost"?: string;
     "remotePort"?: number;
+    "remoteSocket"?: string;
     "socksPort"?: number;
     "autoStart": boolean;
+}
+
+/**
+ * HostTestResult reports the outcome of a one-shot SSH connectivity check.
+ * A failed SSH handshake is represented in the result instead of as an RPC
+ * error so the UI can show a useful per-host status while keeping malformed
+ * requests (for example an unknown host ID) as regular API errors.
+ */
+export interface HostTestResult {
+    "hostId": string;
+    "success": boolean;
+    "durationMs": number;
+    "error"?: string;
 }
 
 /**
@@ -119,6 +139,7 @@ export interface UpdateTunnelRequest {
     "targetSocket"?: string;
     "remoteBindHost"?: string;
     "remotePort"?: number;
+    "remoteSocket"?: string;
     "socksPort"?: number;
     "autoStart": boolean;
 }

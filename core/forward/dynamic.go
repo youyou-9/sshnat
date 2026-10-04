@@ -22,9 +22,9 @@ type DynamicConfig struct {
 
 // Dynamic 实现 -D。本地 SOCKS5 代理通过 SSH 客户端连接目标。
 type Dynamic struct {
-	cfg DynamicConfig
-	cli *ssh.Client
-	t   Traffic
+	cfg  DynamicConfig
+	cli  *ssh.Client
+	t    Traffic
 	logf func(format string, args ...any)
 
 	mu        sync.Mutex
@@ -35,6 +35,9 @@ type Dynamic struct {
 	done      chan struct{}
 	err       error
 	closeOnce sync.Once
+	ctx       context.Context
+	cancel    context.CancelFunc
+	workers   sync.WaitGroup
 }
 
 // NewDynamic 创建动态转发器。
@@ -42,7 +45,8 @@ func NewDynamic(cli *ssh.Client, cfg DynamicConfig, t Traffic) *Dynamic {
 	if cfg.ListenNetwork == "" {
 		cfg.ListenNetwork = "tcp"
 	}
-	return &Dynamic{cfg: cfg, cli: cli, t: t, conns: make(map[net.Conn]struct{}), done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Dynamic{cfg: cfg, cli: cli, t: t, conns: make(map[net.Conn]struct{}), done: make(chan struct{}), ctx: ctx, cancel: cancel}
 }
 
 func (f *Dynamic) Start() error {
@@ -54,11 +58,15 @@ func (f *Dynamic) Start() error {
 	if f.started {
 		return errors.New("forward: already started")
 	}
+	if f.cli == nil {
+		return errors.New("forward: SSH client is nil")
+	}
 	ln, err := net.Listen(f.cfg.ListenNetwork, f.cfg.ListenAddr)
 	if err != nil {
 		return fmt.Errorf("forward: listen SOCKS %s: %w", f.cfg.ListenAddr, err)
 	}
 	f.listener, f.started = ln, true
+	f.workers.Add(1)
 	go f.acceptLoop(ln)
 	go f.watchClient()
 	return nil
@@ -78,6 +86,7 @@ func (f *Dynamic) watchClient() {
 }
 
 func (f *Dynamic) acceptLoop(ln net.Listener) {
+	defer f.workers.Done()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -96,6 +105,7 @@ func (f *Dynamic) acceptLoop(ln net.Listener) {
 			return
 		}
 		f.conns[conn] = struct{}{}
+		f.workers.Add(1)
 		f.mu.Unlock()
 		go f.handle(conn)
 	}
@@ -109,6 +119,7 @@ func (f *Dynamic) SetLogger(l func(format string, args ...any)) {
 }
 
 func (f *Dynamic) handle(client net.Conn) {
+	defer f.workers.Done()
 	defer func() { f.mu.Lock(); delete(f.conns, client); f.mu.Unlock() }()
 	_ = client.SetDeadline(time.Now().Add(10 * time.Second))
 
@@ -136,7 +147,7 @@ func (f *Dynamic) handle(client net.Conn) {
 		logger("SOCKS5 proxy request for target %s", targetAddr)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
 	defer cancel()
 	target, err := f.cli.DialContext(ctx, "tcp", targetAddr)
 	if err != nil {
@@ -157,7 +168,7 @@ func (f *Dynamic) handle(client net.Conn) {
 		logger("SOCKS5 connection established to %s", targetAddr)
 	}
 	in := &countingConn{ReadWriteCloser: client, t: f.t, readTx: true}
-	pipeConns(in, target, f.t)
+	pipeConns(f.ctx, in, target)
 	f.t.ConnClosed()
 	if logger != nil {
 		logger("SOCKS5 connection to %s closed", targetAddr)
@@ -165,27 +176,24 @@ func (f *Dynamic) handle(client net.Conn) {
 }
 
 func (f *Dynamic) Stop() error {
-	f.mu.Lock()
-	f.stopped = true
-	ln := f.listener
-	conns := make([]net.Conn, 0, len(f.conns))
-	for c := range f.conns {
-		conns = append(conns, c)
-	}
-	f.mu.Unlock()
-	if ln != nil {
-		_ = ln.Close()
-	}
-	for _, c := range conns {
-		_ = c.Close()
-	}
 	f.finish()
+	<-f.done
 	return nil
 }
 
-func (f *Dynamic) finish() { f.closeOnce.Do(func() { _ = f.stopResources(); close(f.done) }) }
+func (f *Dynamic) finish() {
+	f.closeOnce.Do(func() {
+		_ = f.stopResources()
+		go func() {
+			f.workers.Wait()
+			close(f.done)
+		}()
+	})
+}
 func (f *Dynamic) stopResources() error {
 	f.mu.Lock()
+	f.stopped = true
+	f.cancel()
 	ln := f.listener
 	conns := make([]net.Conn, 0, len(f.conns))
 	for c := range f.conns {

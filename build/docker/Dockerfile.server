@@ -1,4 +1,4 @@
-# Wails Server Mode Dockerfile
+# SSHNat headless daemon Dockerfile
 # Multi-stage build for a minimal image.
 #
 # Defaults produce a pure-Go, fully static binary on a distroless/static base:
@@ -13,13 +13,14 @@
 # the builder and runtime libc compatible (a glibc builder -> a glibc runtime).
 # The Taskfile passes these through: task build:docker CGO_ENABLED=1 GO_IMAGE=... RUNTIME_IMAGE=...
 
-ARG GO_IMAGE=golang:alpine
+ARG GO_IMAGE=golang:1.25-alpine
 ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12
 ARG CGO_ENABLED=0
 
 # Build stage
 FROM ${GO_IMAGE} AS builder
 ARG CGO_ENABLED
+ARG VERSION=dev
 
 WORKDIR /app
 
@@ -31,37 +32,23 @@ RUN if command -v apk >/dev/null 2>&1; then \
         apt-get update && apt-get install -y --no-install-recommends git $([ "$CGO_ENABLED" = "1" ] && echo gcc libc6-dev) && rm -rf /var/lib/apt/lists/*; \
     fi
 
-# Copy source code
-COPY . .
+# Use locked dependencies and copy only the headless dependency graph. The
+# desktop entry point's frontend embed must not be needed to build this image.
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/sshnatd ./cmd/sshnatd
+COPY core ./core
+COPY internal/version ./internal/version
 
-# Remove local replace directive if present (for production builds)
-RUN sed -i '/^replace/d' go.mod || true
-
-# Download dependencies
-RUN go mod tidy
-
-# Build the production server binary.
-# - server,production tags: HTTP server mode with production code paths (no dev
-#   logger/asset middleware), matching the desktop production build.
-# - CGO_ENABLED defaults to 0 for a fully static binary (distroless/static);
-#   override with --build-arg CGO_ENABLED=1 (see header) for CGO apps.
-RUN CGO_ENABLED=${CGO_ENABLED} go build -tags server,production -trimpath -buildvcs=false -ldflags="-s -w" -o server .
+# Build the standalone headless daemon. It does not embed the desktop frontend
+# and does not require a display server or an HTTP listener.
+RUN CGO_ENABLED=${CGO_ENABLED} go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w -X github.com/sshnat/sshnat/internal/version.Version=${VERSION}" -o sshnatd ./cmd/sshnatd
 
 # Runtime stage - minimal image
 FROM ${RUNTIME_IMAGE}
 
-# Copy the binary
-COPY --from=builder /app/server /server
+# Copy the binary. Mount a configuration file at /config/config.json when run.
+COPY --from=builder /app/sshnatd /sshnatd
 
-# Copy frontend assets
-COPY --from=builder /app/frontend/dist /frontend/dist
-
-# Expose the default port
-EXPOSE 8080
-
-# Bind to all interfaces (required for Docker)
-# Can be overridden at runtime with -e WAILS_SERVER_HOST=...
-ENV WAILS_SERVER_HOST=0.0.0.0
-
-# Run the server
-ENTRYPOINT ["/server"]
+ENTRYPOINT ["/sshnatd"]
+CMD ["-config", "/config/config.json"]

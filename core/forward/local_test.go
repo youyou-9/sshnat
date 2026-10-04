@@ -79,9 +79,9 @@ func (s *mockSSHServer) handle(conn net.Conn, t *testing.T) {
 		switch ch.ChannelType() {
 		case "direct-tcpip":
 			var payload struct {
-				Addr string
-				Port uint32
-				Orig string
+				Addr     string
+				Port     uint32
+				Orig     string
 				OrigPort uint32
 			}
 			if err := gossh.Unmarshal(ch.ExtraData(), &payload); err != nil {

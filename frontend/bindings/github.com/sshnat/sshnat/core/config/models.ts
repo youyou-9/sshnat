@@ -36,4 +36,14 @@ export interface Host {
      */
     "keepaliveSeconds"?: number;
     "knownHostsFile"?: string;
+
+    /**
+     * accept-new | strict
+     */
+    "hostKeyPolicy"?: string;
+
+    /**
+     * 0 = 默认 15s
+     */
+    "connectTimeoutSeconds"?: number;
 }

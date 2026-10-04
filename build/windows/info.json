@@ -3,7 +3,8 @@
 		"file_version": "1.0.0"
 	},
 	"info": {
-		"0000": {
+		"0409": {
+			"FileVersion": "1.0.0",
 			"ProductVersion": "1.0.0",
 			"CompanyName": "SSHNat",
 			"FileDescription": "SSHNat - SSH port forwarding client",

@@ -35,18 +35,18 @@ type Event struct {
 	Status   Status `json:"status,omitempty"`
 	Previous Status `json:"previous,omitempty"`
 	Error    string `json:"error,omitempty"`
-	Attempt  int    `json:"attempt,omitempty"` // 第几次重连尝试
-	NextInMs int64  `json:"nextInMs,omitempty"`// 距下次重连毫秒数
+	Attempt  int    `json:"attempt,omitempty"`  // 第几次重连尝试
+	NextInMs int64  `json:"nextInMs,omitempty"` // 距下次重连毫秒数
 
 	// stats 事件字段：自上次事件以来的增量 + 累计值。
-	Tx       uint64 `json:"tx,omitempty"`       // 本周期发送增量
-	Rx       uint64 `json:"rx,omitempty"`       // 本周期接收增量
-	TxTotal  uint64 `json:"txTotal,omitempty"`  // 累计发送
-	RxTotal  uint64 `json:"rxTotal,omitempty"`  // 累计接收
-	Conns    int64  `json:"conns,omitempty"`    // 活跃连接
+	Tx         uint64 `json:"tx,omitempty"`         // 本周期发送增量
+	Rx         uint64 `json:"rx,omitempty"`         // 本周期接收增量
+	TxTotal    uint64 `json:"txTotal,omitempty"`    // 累计发送
+	RxTotal    uint64 `json:"rxTotal,omitempty"`    // 累计接收
+	Conns      int64  `json:"conns,omitempty"`      // 活跃连接
 	TotalConns uint64 `json:"totalConns,omitempty"` // 累计连接
 
-	Message string `json:"message,omitempty"` // log 事件
+	Message string    `json:"message,omitempty"` // log 事件
 	Time    time.Time `json:"time"`
 }
 

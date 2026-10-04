@@ -11,6 +11,9 @@ describe("i18n translation system", () => {
 
     expect(t("zh", "status.connected")).toBe("已连接");
     expect(t("en", "status.connected")).toBe("Connected");
+
+    expect(t("zh", "hosts.testSuccess")).toBe("连接成功");
+    expect(t("en", "hosts.testFailed")).toBe("Connection failed");
   });
 
   it("falls back to English or key itself when translation is missing", () => {
@@ -22,6 +25,7 @@ describe("i18n translation system", () => {
     const criticalKeys = [
       "nav.dashboard", "nav.hosts", "nav.tunnels", "nav.logs", "nav.settings",
       "hosts.add", "hosts.edit", "hosts.delete", "hosts.save", "hosts.cancel", "hosts.jumpHosts",
+      "hosts.test", "hosts.testing", "hosts.testSuccess", "hosts.testFailed",
       "tunnel.newTitle", "tunnel.local", "tunnel.remote", "tunnel.dynamic",
       "status.connected", "status.reconnecting", "status.error", "status.stopped",
     ];
