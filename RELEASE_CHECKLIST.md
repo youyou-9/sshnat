@@ -101,5 +101,12 @@ daemon 是否退出；目标可用性使用实际转发服务探测。
 - package job 生成 `SHA256SUMS`，release job 再次验证；下载后执行 `sha256sum -c SHA256SUMS` 验证文件。
 - 最终 tag 与运行时/原生包版本一致，工作树已提交，发行说明列出用户可见的新功能和修复。
 
-PR 与手动 workflow_dispatch 均会生成并解压校验九个发行包，验证文档、Unix 执行权限及 SHA256SUMS，
-并上传 `release-files` artifact；非 tag 构建显示 `dev`。发布仅由 `v*` tag 触发，并下载这份已经通过校验的产物。
+PR、`main` 推送与手动 workflow_dispatch 会生成并解压校验九个发行包，验证文档、Unix 执行权限及
+`SHA256SUMS`，并上传 `release-files` artifact；非 tag 构建显示 `dev`。这些构建不会自动创建
+GitHub Release。发布由 `v*` tag 触发，并下载同一份已经通过校验的产物；包含连字符的 tag（如
+`v1.1.0-rc.1`）会标记为 prerelease：
+
+```bash
+git tag -a v1.1.0-rc.1 -m "Release SSHNat v1.1.0-rc.1"
+git push origin v1.1.0-rc.1
+```

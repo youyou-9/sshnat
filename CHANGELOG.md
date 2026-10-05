@@ -49,5 +49,5 @@ replacing a configuration. A redacted export omits passwords and key passphrases
 private key files and known-hosts files must be transferred separately.
 
 See [AUDIT_REPORT.md](AUDIT_REPORT.md) for executed checks and
-[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for platform verification. This
-candidate has not been tagged or published as a GitHub Release.
+[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for platform verification. The GitHub
+Release is published by the `v1.1.0-rc.1` tag workflow and is marked as a prerelease.

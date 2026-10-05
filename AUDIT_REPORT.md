@@ -64,7 +64,9 @@ SSH/echo 服务。该测试验证 RPC、状态事件、配置与转发；另以 
 
 本机 Node 25.9 不在 jsdom 30 的声明支持范围内，安装有 engine 提示但测试和构建通过；
 CI 使用受支持的 Node 24.15 再次验证。现有正式版本是 v1.0.0，新增功能以
-1.1.0-rc.1 作本机候选验证，未创建 tag 或发布 Release。
+1.1.0-rc.1 作本机候选验证。GitHub `main` 构建只生成预览 artifact，只有推送
+`v*` tag 才会执行 Release job；包含连字符的版本（例如 `v1.1.0-rc.1`）会标记为
+GitHub prerelease。
 
 ## 发行评估
 
@@ -77,7 +79,8 @@ CI 使用受支持的 Node 24.15 再次验证。现有正式版本是 v1.0.0，�
 构建成功不能替代这项验证。Linux 安装包的目标发行版安装验证也尚未执行，且这些
 安装包不属于当前九个发行压缩包。不将上述未验证范围宣称为已通过。
 
-修复及功能改进已提交到 [PR #2](https://github.com/youyou-9/sshnat/pull/2)，
-保持草稿供审阅；未合并、创建 tag 或发布 GitHub Release。
+修复及功能改进已合并自 [PR #2](https://github.com/youyou-9/sshnat/pull/2)。
+候选发布命令为 `git tag -a v1.1.0-rc.1 -m "Release SSHNat v1.1.0-rc.1"`
+和 `git push origin v1.1.0-rc.1`；tag workflow 会重新执行全部门禁并上传已校验的包。
 
 本报告记录已执行的检查，不表示任意环境或未覆盖场景不存在缺陷。

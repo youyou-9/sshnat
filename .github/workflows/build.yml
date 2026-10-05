@@ -357,6 +357,7 @@ jobs:
           files: release-files/*
           tag_name: ${{ github.ref_name }}
           name: SSHNat ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
