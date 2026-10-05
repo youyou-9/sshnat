@@ -12,7 +12,9 @@ export {
 
 export type {
     AppInfo,
+    ConfigImportResult,
     CreateTunnelRequest,
+    HostTestResult,
     TunnelView,
     UpdateTunnelRequest
 } from "./models.js";

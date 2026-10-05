@@ -30,6 +30,14 @@ export function CreateFromSSHCommand(cmd: string): $CancellablePromise<$models.T
 }
 
 /**
+ * CreateFromSSHCommandForShell imports a command quoted for posix or
+ * powershell. An empty shell keeps the operating system's default.
+ */
+export function CreateFromSSHCommandForShell(cmd: string, shell: string): $CancellablePromise<$models.TunnelView[] | null> {
+    return $Call.ByID(3638925160, cmd, shell);
+}
+
+/**
  * Delete 删除隧道（运行中会先停止）。
  */
 export function Delete(id: string): $CancellablePromise<void> {

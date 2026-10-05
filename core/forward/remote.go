@@ -1,6 +1,7 @@
 package forward
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -26,19 +27,23 @@ type RemoteConfig struct {
 
 // Remote 实现 -R：SSH 服务器侧监听，连接回到本机目标。
 type Remote struct {
-	cfg RemoteConfig
-	cli *ssh.Client
-	t   Traffic
+	cfg  RemoteConfig
+	cli  *ssh.Client
+	t    Traffic
 	logf func(format string, args ...any)
 
 	mu        sync.Mutex
 	listener  net.Listener
 	conns     map[net.Conn]struct{}
+	starting  bool
 	started   bool
 	stopped   bool
 	done      chan struct{}
 	err       error
 	closeOnce sync.Once
+	ctx       context.Context
+	cancel    context.CancelFunc
+	workers   sync.WaitGroup
 }
 
 // NewRemote 创建远程转发器。
@@ -46,28 +51,71 @@ func NewRemote(cli *ssh.Client, cfg RemoteConfig, t Traffic) *Remote {
 	if cfg.TargetNetwork == "" {
 		cfg.TargetNetwork = "tcp"
 	}
-	return &Remote{cfg: cfg, cli: cli, t: t, conns: make(map[net.Conn]struct{}), done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Remote{cfg: cfg, cli: cli, t: t, conns: make(map[net.Conn]struct{}), done: make(chan struct{}), ctx: ctx, cancel: cancel}
 }
 
 func (f *Remote) Start() error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if f.stopped {
+		f.mu.Unlock()
 		return errors.New("forward: already stopped")
 	}
-	if f.started {
+	if f.starting || f.started {
+		f.mu.Unlock()
 		return errors.New("forward: already started")
 	}
+	if f.cli == nil {
+		f.mu.Unlock()
+		return errors.New("forward: SSH client is nil")
+	}
+	f.starting = true
+	f.workers.Add(1)
+	f.mu.Unlock()
+	defer f.workers.Done()
+
 	listenNetwork, listenAddr := "tcp", fmtAddr(f.cfg.BindHost, f.cfg.BindPort)
-	if f.cfg.BindSocket != "" {
-		listenNetwork, listenAddr = "unix", f.cfg.BindSocket
+	type listenResult struct {
+		listener net.Listener
+		err      error
 	}
-	ln, err := f.cli.Listen(listenNetwork, listenAddr)
-	if err != nil {
-		return fmt.Errorf("forward: remote listen %s %s: %w", listenNetwork, listenAddr, err)
+	result := make(chan listenResult, 1)
+	go func() {
+		var ln net.Listener
+		var err error
+		if f.cfg.BindSocket != "" {
+			ln, err = f.cli.ListenUnix(f.cfg.BindSocket)
+		} else {
+			ln, err = f.cli.Listen(listenNetwork, listenAddr)
+		}
+		result <- listenResult{listener: ln, err: err}
+	}()
+	var response listenResult
+	select {
+	case response = <-result:
+	case <-f.ctx.Done():
+		// Interrupt the global request so Stop can run while Start is pending.
+		_ = f.cli.Close()
+		response = <-result
 	}
-	f.listener, f.started = ln, true
-	go f.acceptLoop(ln)
+	f.mu.Lock()
+	f.starting = false
+	if f.stopped {
+		f.mu.Unlock()
+		if response.listener != nil {
+			_ = f.cli.Close()
+			_ = response.listener.Close()
+		}
+		return errors.New("forward: stopped while starting")
+	}
+	if response.err != nil {
+		f.mu.Unlock()
+		return fmt.Errorf("forward: remote listen %s %s: %w", listenNetwork, listenAddr, response.err)
+	}
+	f.listener, f.started = response.listener, true
+	f.workers.Add(1)
+	f.mu.Unlock()
+	go f.acceptLoop(response.listener)
 	go f.watchClient()
 	return nil
 }
@@ -86,6 +134,7 @@ func (f *Remote) watchClient() {
 }
 
 func (f *Remote) acceptLoop(ln net.Listener) {
+	defer f.workers.Done()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -104,6 +153,7 @@ func (f *Remote) acceptLoop(ln net.Listener) {
 			return
 		}
 		f.conns[conn] = struct{}{}
+		f.workers.Add(1)
 		f.mu.Unlock()
 		go f.handle(conn)
 	}
@@ -117,6 +167,7 @@ func (f *Remote) SetLogger(l func(format string, args ...any)) {
 }
 
 func (f *Remote) handle(inbound net.Conn) {
+	defer f.workers.Done()
 	defer func() {
 		f.mu.Lock()
 		delete(f.conns, inbound)
@@ -132,13 +183,10 @@ func (f *Remote) handle(inbound net.Conn) {
 		logger("Inbound remote connection from %s -> forwarding to local %s", remoteAddr, f.cfg.TargetAddr)
 	}
 
-	var target net.Conn
-	var err error
-	if f.cfg.TargetNetwork == "unix" {
-		target, err = net.DialTimeout("unix", f.cfg.TargetAddr, 15*time.Second)
-	} else {
-		target, err = net.DialTimeout("tcp", f.cfg.TargetAddr, 15*time.Second)
-	}
+	ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
+	defer cancel()
+	dialer := net.Dialer{}
+	target, err := dialer.DialContext(ctx, f.cfg.TargetNetwork, f.cfg.TargetAddr)
 	if err != nil {
 		if logger != nil {
 			logger("Failed to connect to local target %s: %v", f.cfg.TargetAddr, err)
@@ -153,7 +201,7 @@ func (f *Remote) handle(inbound net.Conn) {
 	// Remote peer -> local target is received traffic; the reverse direction is transmitted.
 	// Only wrap inbound to ensure each byte in either direction is counted exactly once.
 	cin := &countingConn{ReadWriteCloser: inbound, t: f.t, readTx: false}
-	pipeConns(cin, target, f.t)
+	pipeConns(f.ctx, cin, target)
 	f.t.ConnClosed()
 	if logger != nil {
 		logger("Remote connection closed from %s", remoteAddr)
@@ -162,15 +210,25 @@ func (f *Remote) handle(inbound net.Conn) {
 
 func (f *Remote) Stop() error {
 	f.finish()
+	<-f.done
 	return nil
 }
 
-func (f *Remote) finish() { f.closeOnce.Do(func() { _ = f.StopNoFinish(); close(f.done) }) }
+func (f *Remote) finish() {
+	f.closeOnce.Do(func() {
+		_ = f.StopNoFinish()
+		go func() {
+			f.workers.Wait()
+			close(f.done)
+		}()
+	})
+}
 
 // StopNoFinish closes resources without recursively calling finish.
 func (f *Remote) StopNoFinish() error {
 	f.mu.Lock()
 	f.stopped = true
+	f.cancel()
 	ln := f.listener
 	conns := make([]net.Conn, 0, len(f.conns))
 	for c := range f.conns {
@@ -178,7 +236,19 @@ func (f *Remote) StopNoFinish() error {
 	}
 	f.mu.Unlock()
 	if ln != nil {
-		_ = ln.Close()
+		closed := make(chan struct{})
+		go func() { _ = ln.Close(); close(closed) }()
+		select {
+		case <-closed:
+		case <-time.After(time.Second):
+			// OpenSSH remote-listener Close waits for a global cancellation
+			// reply. A dead/unresponsive server must not strand Stop forever;
+			// closing the owning SSH transport releases that request.
+			if f.cli != nil {
+				_ = f.cli.Close()
+			}
+			<-closed
+		}
 	}
 	for _, c := range conns {
 		_ = c.Close()

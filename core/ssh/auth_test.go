@@ -34,6 +34,16 @@ func TestKeyboardInteractiveOnlyAnswersPassword(t *testing.T) {
 	if ans2[1] != "my-secret-password" {
 		t.Fatalf("Password prompt should get password: got %q", ans2[1])
 	}
+
+	// An unknown single prompt can be an OTP or another second factor; never
+	// guess that it is a password just because it is the only question.
+	ans3, err := cb("name", "inst", []string{"Verification code:"}, []bool{false})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ans3[0] != "" {
+		t.Fatalf("unknown prompt should stay empty: got %q", ans3[0])
+	}
 }
 
 func TestHostKeyCallbackAcceptNew(t *testing.T) {

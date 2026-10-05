@@ -17,8 +17,78 @@ on:
   workflow_dispatch:
 
 jobs:
+  quality:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.6"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.15"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci
+
+      - name: Audit frontend dependencies
+        run: npm --prefix frontend audit
+
+      - name: Check frontend types
+        run: npm --prefix frontend run check
+
+      - name: Test frontend
+        run: npm --prefix frontend test -- --run
+
+      - name: Build frontend assets
+        run: npm --prefix frontend run build
+
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
+
+      - name: Test Go packages
+        run: go test -tags gtk3 ./...
+
+      - name: Vet Go packages
+        run: go vet -tags gtk3 ./...
+
+      - name: Check reachable Go vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -tags gtk3 ./...
+
+      - name: Detect Go data races
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -tags gtk3 ./...
+
+  docker:
+    name: Headless Docker smoke test
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build daemon image without desktop assets
+        run: docker build --build-arg VERSION=1.2.3 -t sshnat-smoke -f build/docker/Dockerfile.server .
+      - name: Check container version and invalid configuration
+        run: |
+          test "$(docker run --rm sshnat-smoke -version)" = "SSHNat 1.2.3"
+          mkdir -p "$RUNNER_TEMP/sshnat-config"
+          printf '%s\n' '{"version":1,"hosts":[],"tunnels":[]}' > "$RUNNER_TEMP/sshnat-config/config.json"
+          docker run --rm --mount "type=bind,source=$RUNNER_TEMP/sshnat-config,target=/config" sshnat-smoke -config /config/config.json -check
+          if docker run --rm sshnat-smoke -config /missing/config.json -all; then
+            echo "A missing configuration must fail startup" >&2
+            exit 1
+          fi
+
   gui:
     name: GUI · ${{ matrix.name }}
+    needs: quality
     strategy:
       fail-fast: false
       matrix:
@@ -35,18 +105,30 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.26.6"
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24.15"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Resolve build version
+        id: version
+        shell: bash
+        run: |
+          version=dev
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" == v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
 
       # Linux 需要 WebKitGTK 开发头文件（系统 WebView 渲染层）
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
+          sudo apt-get install -y build-essential libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config xvfb dbus-x11
 
       - name: Install wails3 CLI
         env:
@@ -56,42 +138,93 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          npm --prefix frontend ci || npm --prefix frontend install
+          npm --prefix frontend ci
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             echo "CGO_ENABLED=$(go env CGO_ENABLED)"
             pkg-config --modversion gtk+-3.0
             pkg-config --modversion webkit2gtk-4.1
             # Wails v3 defaults to GTK4; the runner dependencies above use the
             # stable GTK3/WebKitGTK 4.1 toolchain, so select the matching tag.
-            CGO_ENABLED=1 wails3 task build HAS_CC=true EXTRA_TAGS=gtk3
+            CGO_ENABLED=1 wails3 task build HAS_CC=true EXTRA_TAGS=gtk3 VERSION="${{ steps.version.outputs.value }}"
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
-            wails3 task darwin:package
+            wails3 task darwin:package VERSION="${{ steps.version.outputs.value }}"
           else
-            wails3 task build
+            wails3 task build VERSION="${{ steps.version.outputs.value }}"
           fi
 
-      - name: Collect artifacts (unix)
-        if: runner.os != 'Windows'
+      - name: Verify GTK3 Debian package metadata
+        if: runner.os == 'Linux'
         shell: bash
         run: |
+          set -euo pipefail
+          wails3 task linux:generate:deb EXTRA_TAGS=gtk3 ARCH=amd64
+          packages=(bin/*.deb)
+          test "${#packages[@]}" -eq 1
+          test "$(dpkg-deb --field "${packages[0]}" Architecture)" = amd64
+          deps="$(dpkg-deb --field "${packages[0]}" Depends)"
+          [[ "$deps" == *libgtk-3-0* && "$deps" == *libwebkit2gtk-4.1-0* ]]
+          [[ "$deps" != *libgtk-4-1* && "$deps" != *libwebkitgtk-6.0-4* ]]
+          dpkg-deb --extract "${packages[0]}" "$RUNNER_TEMP/sshnat-deb"
+          test -x "$RUNNER_TEMP/sshnat-deb/usr/local/bin/sshnat"
+
+      - name: Smoke test native Linux startup
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SSHNAT_CONFIG_DIR="$RUNNER_TEMP/sshnat-desktop-config"
+          mkdir -p "$SSHNAT_CONFIG_DIR"
+          # A virtual display checks native GTK/WebKit startup without requiring
+          # an interactive desktop. Timeout is the expected successful result.
+          result=0
+          timeout --signal=TERM 10s dbus-run-session -- xvfb-run -a bin/sshnat > "$RUNNER_TEMP/sshnat-startup.log" 2>&1 || result=$?
+          cat "$RUNNER_TEMP/sshnat-startup.log"
+          test "$result" -eq 124
+
+      - name: Verify Windows executable metadata
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $metadata = Get-Content build/windows/info.json -Raw | ConvertFrom-Json
+          $expectedVersion = $metadata.fixed.file_version
+          $exe = Get-Item bin/sshnat.exe
+          $versionInfo = $exe.VersionInfo
+          if ($exe.Length -le 0 -or $versionInfo.ProductName -ne 'SSHNat' -or $versionInfo.CompanyName -ne 'SSHNat' -or $versionInfo.FileVersion -ne $expectedVersion -or $versionInfo.ProductVersion -ne $expectedVersion) {
+            throw 'Windows executable version or product metadata is missing or inconsistent'
+          }
+          $numericVersion = '{0}.{1}.{2}' -f $versionInfo.FileMajorPart, $versionInfo.FileMinorPart, $versionInfo.FileBuildPart
+          if ($numericVersion -ne $expectedVersion -or $versionInfo.FilePrivatePart -ne 0) {
+            throw 'Windows executable fixed file version does not match package metadata'
+          }
+
+      - name: Collect desktop artifact
+        shell: bash
+        run: |
+          set -euo pipefail
           mkdir -p dist
-          cp -r bin/sshnat.app dist/ 2>/dev/null || true
-          cp bin/sshnat dist/ 2>/dev/null || true
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cp bin/sshnat.exe dist/
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            cp -r bin/sshnat.app dist/
+          else
+            cp bin/sshnat dist/
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
           name: sshnat-gui-${{ matrix.name }}
-          path: |
-            bin/sshnat.exe
-            dist/*
+          path: dist/*
+          if-no-files-found: error
 
   daemon:
     name: Daemon · ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: quality
     strategy:
       fail-fast: false
       matrix:
         include:
           - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
           - { goos: linux, goarch: amd64 }
           - { goos: linux, goarch: arm64 }
           - { goos: darwin, goarch: amd64 }
@@ -101,31 +234,35 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.26.6"
       - name: Cross compile
         run: |
           mkdir -p dist
           ext=""
           if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
+          version=dev
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" == v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
-            go build -trimpath -ldflags="-s -w" \
+            go build -trimpath -ldflags="-s -w -X github.com/sshnat/sshnat/internal/version.Version=${version}" \
             -o dist/sshnatd-${{ matrix.goos }}-${{ matrix.goarch }}${ext} ./cmd/sshnatd
       - uses: actions/upload-artifact@v4
         with:
           name: sshnatd-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
+          if-no-files-found: error
 
-  release:
-    name: Release
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    needs: [gui, daemon]
+  package:
+    name: Package and verify release artifacts
+    needs: [gui, daemon, docker]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
+      - uses: actions/checkout@v4
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: sshnat*
           path: release
 
       - name: Package artifacts
@@ -135,20 +272,84 @@ jobs:
           OUTPUT_DIR="$GITHUB_WORKSPACE/release-files"
           mkdir -p "$OUTPUT_DIR"
           command -v zip >/dev/null || { echo "zip is required" >&2; exit 1; }
+          command -v unzip >/dev/null || { echo "unzip is required" >&2; exit 1; }
+          expected=(
+            sshnat-gui-Windows-amd64 sshnat-gui-Linux-amd64 sshnat-gui-macOS-arm64
+            sshnatd-windows-amd64 sshnatd-windows-arm64
+            sshnatd-linux-amd64 sshnatd-linux-arm64
+            sshnatd-darwin-amd64 sshnatd-darwin-arm64
+          )
+          for name in "${expected[@]}"; do
+            test -d "release/$name" || { echo "Missing artifact: $name" >&2; exit 1; }
+          done
+          artifact_count="$(find release -mindepth 1 -maxdepth 1 -type d | wc -l)"
+          test "$artifact_count" -eq "${#expected[@]}" || { echo "Unexpected artifact count: $artifact_count" >&2; exit 1; }
           for artifact in release/*; do
             if [ -d "$artifact" ]; then
               name="$(basename "$artifact")"
+              cp LICENSE "$artifact/LICENSE"
+              cp README.md README_zh.md RELEASE_CHECKLIST.md CHANGELOG.md "$artifact/"
+              # upload-artifact normalizes file modes to 0644. Restore Unix
+              # executable bits before archiving runnable release packages.
+              find "$artifact" -type f \( -name sshnat -o -name 'sshnatd-linux-*' -o -name 'sshnatd-darwin-*' \) -exec chmod +x {} +
               case "$name" in
                 sshnat-gui-Windows-*|sshnat-gui-macOS-*|sshnatd-windows-*)
                   (cd "$artifact" && zip -qr "$OUTPUT_DIR/${name}.zip" .)
+                  verify_dir="$RUNNER_TEMP/sshnat-package-check/$name"
+                  mkdir -p "$verify_dir"
+                  unzip -q "$OUTPUT_DIR/${name}.zip" -d "$verify_dir"
                   ;;
                 *)
                   tar -C "$artifact" -czf "$OUTPUT_DIR/${name}.tar.gz" .
+                  verify_dir="$RUNNER_TEMP/sshnat-package-check/$name"
+                  mkdir -p "$verify_dir"
+                  tar -xzf "$OUTPUT_DIR/${name}.tar.gz" -C "$verify_dir"
                   ;;
+              esac
+              for document in LICENSE README.md README_zh.md RELEASE_CHECKLIST.md CHANGELOG.md; do
+                test -s "$verify_dir/$document" || { echo "Missing document in $name: $document" >&2; exit 1; }
+              done
+              case "$name" in
+                sshnat-gui-Windows-*) test -s "$verify_dir/sshnat.exe" ;;
+                sshnat-gui-Linux-*) test -x "$verify_dir/sshnat" ;;
+                sshnat-gui-macOS-*)
+                  test -x "$verify_dir/sshnat.app/Contents/MacOS/sshnat"
+                  test -s "$verify_dir/sshnat.app/Contents/Info.plist"
+                  ;;
+                sshnatd-windows-*) test -s "$verify_dir/$name.exe" ;;
+                sshnatd-linux-*|sshnatd-darwin-*) test -x "$verify_dir/$name" ;;
+                *) echo "Unexpected artifact: $name" >&2; exit 1 ;;
               esac
             fi
           done
+          (cd "$OUTPUT_DIR" && sha256sum ./*.zip ./*.tar.gz > SHA256SUMS && sha256sum --check SHA256SUMS)
           ls -lh "$OUTPUT_DIR"
+
+      - name: Upload verified release packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: release-files/*
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified release packages
+        uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: release-files
+
+      - name: Verify package checksums
+        working-directory: release-files
+        run: sha256sum --check SHA256SUMS
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

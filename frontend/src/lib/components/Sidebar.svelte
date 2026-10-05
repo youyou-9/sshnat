@@ -9,9 +9,19 @@
     ArrowDown,
   } from "@lucide/svelte";
   import { app, type Page } from "@/lib/state.svelte";
+  import { SettingsService, type AppInfo } from "@/lib/api";
   import { t } from "@/lib/i18n";
 
   let { class: className = "" }: { class?: string } = $props();
+  let appInfo = $state<AppInfo | null>(null);
+
+  $effect(() => {
+    SettingsService.Get()
+      .then((info) => {
+        if (info) appInfo = info;
+      })
+      .catch(() => {});
+  });
 
   const items: { id: Page; key: string; icon: typeof LayoutDashboard }[] = [
     { id: "dashboard", key: "nav.dashboard", icon: LayoutDashboard },
@@ -44,7 +54,9 @@
     </div>
     <div class="hidden items-baseline gap-2 sm:flex">
       <span class="text-[15px] font-semibold tracking-tight text-ink">SSHNat</span>
-      <span class="rounded bg-accent/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-accent">v1.0.0</span>
+      {#if appInfo?.version}
+        <span class="rounded bg-accent/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-accent">v{appInfo.version}</span>
+      {/if}
     </div>
   </div>
 

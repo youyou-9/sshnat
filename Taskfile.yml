@@ -5,6 +5,8 @@ vars:
   BIN_DIR: "bin"
   PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "npm"}}'
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+  # Release jobs pass VERSION=1.2.3; local builds remain explicitly marked dev.
+  VERSION: '{{.VERSION | default "dev"}}'
   # Target OS for build/package/run. Defaults to the host OS, and is overridden
   # by `wails3 build GOOS=...` (or the GOOS env var) for cross-compilation. The
   # tasks below dispatch to the matching platform Taskfile via this variable.
@@ -35,12 +37,35 @@ tasks:
 
   daemon:all:
     summary: 交叉编译 headless 守护进程（windows/linux/darwin × amd64/arm64）
+    deps:
+      - task: daemon:build
+        vars: { TARGET_OS: windows, TARGET_ARCH: amd64, EXT: .exe }
+      - task: daemon:build
+        vars: { TARGET_OS: windows, TARGET_ARCH: arm64, EXT: .exe }
+      - task: daemon:build
+        vars: { TARGET_OS: linux, TARGET_ARCH: amd64, EXT: "" }
+      - task: daemon:build
+        vars: { TARGET_OS: linux, TARGET_ARCH: arm64, EXT: "" }
+      - task: daemon:build
+        vars: { TARGET_OS: darwin, TARGET_ARCH: amd64, EXT: "" }
+      - task: daemon:build
+        vars: { TARGET_OS: darwin, TARGET_ARCH: arm64, EXT: "" }
+
+  daemon:build:
+    summary: 构建单个 headless 守护进程目标
+    internal: true
     cmds:
-      - cmd: |
-          for t in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
-            os="${t%/*}"; arch="${t#*/}"
-            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "{{.BIN_DIR}}/sshnatd-$os-$arch{{if eq .os "windows"}}.exe{{end}}" ./cmd/sshnatd
-          done
+      # Invoke cmd.exe explicitly: Wails may run Task through sh even on
+      # Windows, where a bare PowerShell New-Item is not available.
+      - cmd: 'cmd /c if not exist "{{.BIN_DIR}}" mkdir "{{.BIN_DIR}}"'
+        platforms: [windows]
+      - cmd: mkdir -p "{{.BIN_DIR}}"
+        platforms: [linux, darwin]
+      - go build -trimpath -buildvcs=false -ldflags "-s -w -X github.com/sshnat/sshnat/internal/version.Version={{.VERSION}}" -o "{{.BIN_DIR}}/sshnatd-{{.TARGET_OS}}-{{.TARGET_ARCH}}{{.EXT}}" ./cmd/sshnatd
+    env:
+      GOOS: '{{.TARGET_OS}}'
+      GOARCH: '{{.TARGET_ARCH}}'
+      CGO_ENABLED: "0"
 
   dev:
     summary: Runs the application in development mode

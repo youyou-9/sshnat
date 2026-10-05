@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { formatTunnelRoute as formatRoute } from "./tunnel-command";
 
 // Formatter utilities for UI display verification
 function fmtBytes(n: number): string {
@@ -16,25 +17,6 @@ function fmtBytes(n: number): string {
 function fmtRate(n?: number): string {
   if (!n) return "0 B/s";
   return `${fmtBytes(n)}/s`;
-}
-
-function formatRoute(tunnel: {
-  type: string;
-  localSocket?: string;
-  localPort?: number;
-  targetSocket?: string;
-  targetHost?: string;
-  targetPort?: number;
-  remotePort?: number;
-  socksPort?: number;
-}): string {
-  if (tunnel.type === "L") {
-    return `${tunnel.localSocket || `127.0.0.1:${tunnel.localPort}`} → ${tunnel.targetSocket || `${tunnel.targetHost}:${tunnel.targetPort}`}`;
-  }
-  if (tunnel.type === "R") {
-    return `:${tunnel.remotePort} ← ${tunnel.targetHost}:${tunnel.targetPort}`;
-  }
-  return `socks5://127.0.0.1:${tunnel.socksPort}`;
 }
 
 describe("Frontend Operations & Formatting Tests", () => {

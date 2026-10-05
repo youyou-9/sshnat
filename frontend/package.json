@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@lucide/svelte": "^1.33.0",
-    "@wailsio/runtime": "latest",
+    "@wailsio/runtime": "3.0.0-beta.11",
     "bits-ui": "^1.8.0",
     "layerchart": "^2.0.0-next.25"
   },

@@ -83,14 +83,11 @@ func (s *Store) Load() (*Settings, error) {
 		}
 		return nil, fmt.Errorf("config: read %s: %w", s.path, err)
 	}
-	var st Settings
-	if err := json.Unmarshal(data, &st); err != nil {
+	st, err := decodeSettings(data)
+	if err != nil {
 		return nil, fmt.Errorf("config: parse %s: %w", s.path, err)
 	}
-	if st.Version == 0 {
-		st.Version = 1
-	}
-	return &st, nil
+	return st, nil
 }
 
 // Save 原子写入配置（先写独立临时文件再 rename），权限 0600。
@@ -125,7 +122,7 @@ func (s *Store) Save(st *Settings) error {
 	if err := tmpFile.Close(); err != nil {
 		return fmt.Errorf("config: close temp: %w", err)
 	}
-	if err := os.Rename(tmpPath, s.path); err != nil {
+	if err := replaceFile(tmpPath, s.path); err != nil {
 		return fmt.Errorf("config: replace: %w", err)
 	}
 	return nil

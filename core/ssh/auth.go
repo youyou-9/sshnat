@@ -3,6 +3,7 @@ package ssh
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,15 +15,15 @@ import (
 )
 
 // newClientConfig 组装握手所需的 ClientConfig（hostkey + 认证）。
-func newClientConfig(opts *DialOptions) (*sshClientConfig, error) {
+func newClientConfig(opts *DialOptions) (*sshClientConfig, []io.Closer, error) {
 	hkc, err := hostKeyCallback(opts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	methods, err := buildAuthMethods(&opts.Auth, opts.User)
+	methods, resources, err := buildAuthMethods(&opts.Auth, opts.User)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	return &sshClientConfig{
@@ -30,13 +31,14 @@ func newClientConfig(opts *DialOptions) (*sshClientConfig, error) {
 		Auth:            methods,
 		HostKeyCallback: hkc,
 		Timeout:         opts.timeout(),
-	}, nil
+	}, resources, nil
 }
 
 // buildAuthMethods 按配置生成认证方法列表。
 // 密码方式自动附带 keyboard-interactive 回退；私钥支持加密私钥。
-func buildAuthMethods(auth *AuthConfig, user string) ([]gossh.AuthMethod, error) {
+func buildAuthMethods(auth *AuthConfig, user string) ([]gossh.AuthMethod, []io.Closer, error) {
 	var methods []gossh.AuthMethod
+	var resources []io.Closer
 
 	switch auth.Type {
 	case AuthPassword:
@@ -47,30 +49,31 @@ func buildAuthMethods(auth *AuthConfig, user string) ([]gossh.AuthMethod, error)
 		)
 	case AuthKey:
 		if auth.KeyPath == "" {
-			return nil, errors.New("ssh: key path is empty")
+			return nil, nil, errors.New("ssh: key path is empty")
 		}
 		signers, err := loadPrivateKeySigners(auth.KeyPath, auth.KeyPassphrase)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		methods = append(methods, gossh.PublicKeys(signers...))
 	case AuthAgent:
 		conn, err := agentdial.Dial(auth.AgentSocket)
 		if err != nil {
-			return nil, fmt.Errorf("ssh: connect agent: %w", err)
+			return nil, nil, fmt.Errorf("ssh: connect agent: %w", err)
 		}
 		agentClient := agent.NewClient(conn)
+		resources = append(resources, conn)
 		methods = append(methods, gossh.PublicKeysCallback(func() ([]gossh.Signer, error) {
 			return agentClient.Signers()
 		}))
 	default:
-		return nil, fmt.Errorf("ssh: unknown auth type %q", auth.Type)
+		return nil, nil, fmt.Errorf("ssh: unknown auth type %q", auth.Type)
 	}
 
 	if len(methods) == 0 {
-		return nil, errors.New("ssh: no auth method configured")
+		return nil, nil, errors.New("ssh: no auth method configured")
 	}
-	return methods, nil
+	return methods, resources, nil
 }
 
 // keyboardInteractive 对密码类提问以密码作答，忽略未知提问（避免将密码误填入二次验证码）。
@@ -78,7 +81,7 @@ func keyboardInteractive(user, password string) gossh.KeyboardInteractiveChallen
 	return func(name, instruction string, questions []string, echos []bool) ([]string, error) {
 		answers := make([]string, len(questions))
 		for i, q := range questions {
-			if containsFold(q, "password") || containsFold(q, "passphrase") || containsFold(q, "密码") || len(questions) == 1 {
+			if containsFold(q, "password") || containsFold(q, "passphrase") || containsFold(q, "密码") {
 				answers[i] = password
 			}
 		}

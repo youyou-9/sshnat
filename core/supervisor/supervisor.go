@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -60,6 +62,7 @@ type Supervisor struct {
 	events *bus
 
 	dialTimeout time.Duration
+	stopTimeout time.Duration
 	logf        func(format string, args ...any)
 }
 
@@ -71,6 +74,7 @@ func New(store *config.Store, reg *stats.Registry) *Supervisor {
 		statsReg:    reg,
 		events:      newBus(),
 		dialTimeout: 15 * time.Second,
+		stopTimeout: 10 * time.Second,
 		logf:        log.Printf,
 	}
 }
@@ -93,8 +97,11 @@ func (s *Supervisor) Start(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if existing, running := s.tunnels[id]; running {
-		status, _ := existing.currentStatus()
-		if status != StatusError && status != StatusStopped {
+		select {
+		case <-existing.doneCh:
+			// A fatal error or normal exit is restartable only after the old
+			// loop has actually relinquished its resources.
+		default:
 			return ErrAlreadyRunning
 		}
 		delete(s.tunnels, id)
@@ -131,14 +138,25 @@ func (s *Supervisor) Stop(id string) error {
 		return ErrNotRunning
 	}
 	m.once.Do(func() { close(m.stopCh) })
+	timedOut := false
 	select {
 	case <-m.doneCh:
-	case <-time.After(10 * time.Second):
-		// run loop 卡死兜底：不再等待，直接从表中移除由调用方决定。
+	case <-time.After(s.stopTimeout):
+		// Do not remove a still-running loop from the table: doing so would
+		// allow Start to create a second loop while the old one can still
+		// reconnect and keep sockets alive. Keep the entry visible and let the
+		// caller retry after the underlying operation becomes interruptible.
+		timedOut = true
 	}
-	m.setStatus(s, StatusStopped, "")
+	if timedOut {
+		m.setStatus(s, StatusError, "stop timed out")
+		return fmt.Errorf("supervisor: stop tunnel %s timed out", id)
+	}
 	s.mu.Lock()
-	delete(s.tunnels, id)
+	if current, exists := s.tunnels[id]; exists && current == m {
+		m.setStatus(s, StatusStopped, "")
+		delete(s.tunnels, id)
+	}
 	s.mu.Unlock()
 	return nil
 }
@@ -163,6 +181,52 @@ func (s *Supervisor) IsRunning(id string) bool {
 	}
 	st := m.status()
 	return st != StatusStopped && st != StatusError
+}
+
+// HasActiveRun reports whether a tunnel's lifecycle loop is still alive,
+// regardless of its displayed status. In particular a timed-out Stop remains
+// active until its done channel closes and must not be replaced or restarted.
+func (s *Supervisor) HasActiveRun(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, ok := s.tunnels[id]
+	if !ok {
+		return false
+	}
+	select {
+	case <-m.doneCh:
+		return false
+	default:
+		return true
+	}
+}
+
+// Error returns the most recent runtime error for a managed tunnel. Unknown
+// and never-started tunnels have no runtime error.
+func (s *Supervisor) Error(id string) string {
+	s.mu.Lock()
+	m, ok := s.tunnels[id]
+	s.mu.Unlock()
+	if !ok {
+		return ""
+	}
+	_, errText := m.currentStatus()
+	return errText
+}
+
+// TestHost performs a one-shot SSH connection using the same dial options as
+// a managed tunnel and closes it before returning. This intentionally does
+// not add anything to the supervisor's tunnel table, so connectivity checks
+// cannot create listeners or reconnect loops.
+func (s *Supervisor) TestHost(ctx context.Context, host config.Host) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	client, err := s.dialHost(ctx, host)
+	if err != nil {
+		return err
+	}
+	return client.Close()
 }
 
 // StopAll 停止所有运行中的隧道（进程退出时用）。
@@ -314,6 +378,17 @@ func (s *Supervisor) run(m *managed, host config.Host) {
 			continue
 		}
 
+		// Remote forwarding setup and cancellation use SSH global requests,
+		// which have no native context API. Closing this dedicated client on
+		// Stop interrupts a server that never replies to those requests.
+		go func(cli *ssh.Client) {
+			select {
+			case <-ctx.Done():
+				_ = cli.Close()
+			case <-cli.Done():
+			}
+		}(client)
+
 		select {
 		case <-m.stopCh:
 			client.Close()
@@ -342,6 +417,12 @@ func (s *Supervisor) run(m *managed, host config.Host) {
 		}
 		if err := fw.Start(); err != nil {
 			client.Close()
+			select {
+			case <-m.stopCh:
+				m.setStatus(s, StatusStopped, "")
+				return
+			default:
+			}
 			s.logf("[supervisor] tunnel %s start error: %v", m.tun.ID, err)
 			m.setStatus(s, StatusError, err.Error())
 			s.events.emit(Event{
@@ -401,8 +482,10 @@ func (s *Supervisor) run(m *managed, host config.Host) {
 			backoff = min64(backoff*2, maxBackoff)
 
 		case <-m.stopCh:
-			_ = fw.Stop()
+			// Close SSH before waiting for the forwarder's workers so remote
+			// listener cancellation cannot hold Stop waiting for a server ack.
 			client.Close()
+			_ = fw.Stop()
 			m.setStatus(s, StatusStopped, "")
 			s.events.emit(Event{
 				Type:     EventLog,
@@ -420,7 +503,11 @@ func (s *Supervisor) dialHost(parentCtx context.Context, host config.Host) (*ssh
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(parentCtx, s.dialTimeout)
+	timeout := s.dialTimeout
+	if opts.Timeout > 0 {
+		timeout = opts.Timeout
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, timeout)
 	defer cancel()
 	return ssh.Dial(ctx, opts)
 }
@@ -441,7 +528,7 @@ func (s *Supervisor) buildForwarder(cli *ssh.Client, tun *config.Tunnel, t *stat
 			if th == "" {
 				th = "127.0.0.1"
 			}
-			targetAddr = fmt.Sprintf("%s:%d", th, tun.TargetPort)
+			targetAddr = net.JoinHostPort(th, strconv.Itoa(tun.TargetPort))
 		}
 		cfg := forward.LocalConfig{
 			ListenNetwork: listenNet,
@@ -462,11 +549,16 @@ func (s *Supervisor) buildForwarder(cli *ssh.Client, tun *config.Tunnel, t *stat
 		if targetHost == "" {
 			targetHost = "127.0.0.1"
 		}
+		targetNetwork, targetAddr := "tcp", net.JoinHostPort(targetHost, strconv.Itoa(tun.TargetPort))
+		if tun.TargetSocket != "" {
+			targetNetwork, targetAddr = "unix", tun.TargetSocket
+		}
 		f := forward.NewRemote(cli, forward.RemoteConfig{
 			BindHost:      bindHost,
 			BindPort:      tun.RemotePort,
-			TargetNetwork: "tcp",
-			TargetAddr:    fmt.Sprintf("%s:%d", targetHost, tun.TargetPort),
+			BindSocket:    tun.RemoteSocket,
+			TargetNetwork: targetNetwork,
+			TargetAddr:    targetAddr,
 		}, t)
 		f.SetLogger(logCallback)
 		return f, nil
@@ -477,7 +569,7 @@ func (s *Supervisor) buildForwarder(cli *ssh.Client, tun *config.Tunnel, t *stat
 		}
 		f := forward.NewDynamic(cli, forward.DynamicConfig{
 			ListenNetwork: "tcp",
-			ListenAddr:    fmt.Sprintf("%s:%d", bindHost, tun.SocksPort),
+			ListenAddr:    net.JoinHostPort(bindHost, strconv.Itoa(tun.SocksPort)),
 		}, t)
 		f.SetLogger(logCallback)
 		return f, nil
@@ -494,7 +586,7 @@ func localListen(tun *config.Tunnel) (string, string) {
 	if bh == "" {
 		bh = "127.0.0.1"
 	}
-	return "tcp", fmt.Sprintf("%s:%d", bh, tun.LocalPort)
+	return "tcp", net.JoinHostPort(bh, strconv.Itoa(tun.LocalPort))
 }
 
 // sleepOrStop 睡眠 d；期间收到停止信号返回 true，自然醒返回 false。

@@ -6,11 +6,13 @@
   import Sparkline from "@/lib/components/Sparkline.svelte";
   import NewTunnelModal from "@/lib/components/NewTunnelModal.svelte";
   import TunnelLogsModal from "@/lib/components/TunnelLogsModal.svelte";
+  import { buildTunnelCliCommand, copyText, formatTunnelRoute } from "@/lib/tunnel-command";
   import {
     app,
     startTunnel,
     stopTunnel,
     deleteTunnel,
+    errorMessage,
   } from "@/lib/state.svelte";
   import type { Tunnel } from "@/lib/api";
   import { t } from "@/lib/i18n";
@@ -26,52 +28,29 @@
   };
 
   const route = $derived.by(() => {
-    const t = tunnel;
-    if (t.type === "L") return `${t.localSocket || `127.0.0.1:${t.localPort}`} → ${t.targetSocket || `${t.targetHost}:${t.targetPort}`}`;
-    if (t.type === "R") return `:${t.remotePort} ← ${t.targetHost}:${t.targetPort}`;
-    return `socks5://127.0.0.1:${t.socksPort}`;
+    return formatTunnelRoute(tunnel);
   });
 
   const connected = $derived(tunnel.status === "connected");
   const hostObj = $derived(app.hosts.find((h) => h.id === tunnel.hostId));
   const hostName = $derived(hostObj?.name ?? tunnel.hostId);
   const isTargetSameAsHost = $derived(
-    tunnel.type === "L" && !!hostObj?.host && (tunnel.targetHost.trim() === hostObj.host.trim())
+    tunnel.type === "L" && !tunnel.targetSocket && !!hostObj?.host && !/^(localhost|127\..*|\[?::1\]?)$/i.test(hostObj.host.trim()) && (tunnel.targetHost?.trim() === hostObj.host.trim())
   );
   let copied = $state(false);
+  let actionError = $state("");
+  const operationError = $derived(actionError || app.tunnelOperationErrors[tunnel.id] || tunnel.error);
 
-  function copyCliCommand() {
-    const user = hostObj ? hostObj.user : "root";
-    const addr = hostObj ? hostObj.host : "host";
-    const port = hostObj ? hostObj.port : 22;
-    const authMethod = hostObj?.auth?.method || "password";
-    const keyPath = hostObj?.auth?.keyPath || "";
-
-    const parts = ["ssh"];
-    if (authMethod === "key" && keyPath) {
-      const safeKey = keyPath.includes(" ") ? `"${keyPath}"` : keyPath;
-      parts.push(`-i ${safeKey}`);
-    }
-    if (port && port !== 22) {
-      parts.push(`-p ${port}`);
-    }
-    parts.push("-N");
-
-    if (tunnel.type === "L") {
-      parts.push(`-L ${tunnel.localPort}:${tunnel.targetHost || "127.0.0.1"}:${tunnel.targetPort}`);
-    } else if (tunnel.type === "R") {
-      const rb = tunnel.remoteBindHost ? `${tunnel.remoteBindHost}:` : "";
-      parts.push(`-R ${rb}${tunnel.remotePort}:${tunnel.targetHost || "127.0.0.1"}:${tunnel.targetPort}`);
-    } else {
-      parts.push(`-D ${tunnel.socksPort}`);
-    }
-
-    parts.push(`${user}@${addr}`);
-    const cmd = parts.join(" ");
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(cmd);
-      copied = true;
-      setTimeout(() => (copied = false), 1500);
+  async function copyCliCommand() {
+    actionError = "";
+    try {
+      const cmd = buildTunnelCliCommand(tunnel, hostObj, { hosts: app.hosts, useAppDefaults: true });
+      if (await copyText(cmd)) {
+        copied = true;
+        setTimeout(() => (copied = false), 1500);
+      } else actionError = t(app.language, "tunnel.copyError");
+    } catch (error) {
+      actionError = errorMessage(error);
     }
   }
 
@@ -92,35 +71,27 @@
     return `${fmtBytes(n)}/s`;
   }
 
-  let toggling = $state(false);
-  let deleting = $state(false);
-
   async function toggle(checked: boolean) {
-    if (toggling) return;
-    toggling = true;
+    if (app.tunnelBusy[tunnel.id]) return;
+    actionError = "";
     try {
       if (checked) await startTunnel(tunnel.id);
       else await stopTunnel(tunnel.id);
-    } catch (e: any) {
-      const msg = typeof e === "string" ? e : (e?.message ?? String(e));
-      tunnel.error = msg;
-    } finally {
-      toggling = false;
+    } catch (error) {
+      actionError = errorMessage(error);
     }
   }
 
   async function handleDelete() {
-    if (deleting) return;
+    if (app.tunnelBusy[tunnel.id]) return;
     if (typeof window !== "undefined" && !window.confirm(t(app.language, "tunnel.deleteConfirm"))) {
       return;
     }
-    deleting = true;
+    actionError = "";
     try {
       await deleteTunnel(tunnel.id);
-    } catch (e: any) {
-      console.error("Delete tunnel failed:", e);
-    } finally {
-      deleting = false;
+    } catch (error) {
+      actionError = errorMessage(error);
     }
   }
 </script>
@@ -142,7 +113,7 @@
     </div>
 
     <!-- 启停开关（只用 switch，无叠加对勾） -->
-    <Switch checked={tunnel.running} disabled={toggling} onCheckedChange={toggle} />
+    <Switch checked={tunnel.running} disabled={!!app.tunnelBusy[tunnel.id]} aria-label={`${t(app.language, "tunnel.toggle")}: ${tunnel.name}`} onCheckedChange={toggle} />
   </div>
 
   <!-- 状态行 -->
@@ -165,8 +136,8 @@
         {t(app.language, "status.stopped")}
       {/if}
     </span>
-    {#if tunnel.error && tunnel.status !== "running"}
-      <span class="truncate font-mono text-[11px] text-bad/80" title={tunnel.error}>{tunnel.error}</span>
+    {#if operationError}
+      <span role="alert" class="truncate font-mono text-[11px] text-bad/80" title={operationError}>{operationError}</span>
     {/if}
   </div>
 
@@ -225,10 +196,10 @@
           <Copy size={14} />
         {/if}
       </Button>
-      <Button variant="ghost" size="icon" aria-label={t(app.language, "tunnel.edit")} title={t(app.language, "tunnel.edit")} onclick={() => (editModalOpen = true)}>
+      <Button variant="ghost" size="icon" disabled={!!app.tunnelBusy[tunnel.id]} aria-label={t(app.language, "tunnel.edit")} title={t(app.language, "tunnel.edit")} onclick={() => (editModalOpen = true)}>
         <Pencil size={14} />
       </Button>
-      <Button variant="ghost" size="icon" disabled={deleting} aria-label={t(app.language, "tunnel.delete")} title={t(app.language, "tunnel.delete")} onclick={handleDelete}>
+      <Button variant="ghost" size="icon" disabled={!!app.tunnelBusy[tunnel.id]} aria-label={t(app.language, "tunnel.delete")} title={t(app.language, "tunnel.delete")} onclick={handleDelete}>
         <Trash2 size={14} />
       </Button>
     </div>

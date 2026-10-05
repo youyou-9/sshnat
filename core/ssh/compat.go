@@ -23,7 +23,15 @@ type sshRawClient interface {
 	gossh.Conn
 	Dial(network, addr string) (net.Conn, error)
 	Listen(network, addr string) (net.Listener, error)
+	ListenUnix(socketPath string) (net.Listener, error)
 	OpenChannel(name string, data []byte) (gossh.Channel, <-chan *gossh.Request, error)
+}
+
+// ListenUnix requests an OpenSSH stream-local forward on the server. It is
+// kept on the wrapper so forward.Remote can support -R Unix socket listeners
+// through both direct and jump-host connections.
+func (c *Client) ListenUnix(socketPath string) (net.Listener, error) {
+	return c.sshRawClient.ListenUnix(socketPath)
 }
 
 // newClientConn 握手并建立客户端（支持 context 取消）。
@@ -55,13 +63,20 @@ func newClientConn(ctx context.Context, conn net.Conn, addr string, cfg *sshClie
 }
 
 func dialRawContext(ctx context.Context, raw sshRawClient, addr string) (net.Conn, error) {
+	return dialConnContext(ctx, func() (net.Conn, error) { return raw.Dial("tcp", addr) })
+}
+
+func dialConnContext(ctx context.Context, dial func() (net.Conn, error)) (net.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	type result struct {
 		conn net.Conn
 		err  error
 	}
 	ch := make(chan result, 1)
 	go func() {
-		conn, err := raw.Dial("tcp", addr)
+		conn, err := dial()
 		ch <- result{conn, err}
 	}()
 	select {
@@ -80,7 +95,7 @@ func dialRawContext(ctx context.Context, raw sshRawClient, addr string) (net.Con
 // DialContext 通过 SSH 客户端拨号（TCP 或 Unix socket），支持 ctx 取消与超时。
 func (c *Client) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	if network == "unix" {
-		return c.DialUnix(addr)
+		return dialConnContext(ctx, func() (net.Conn, error) { return c.DialUnix(addr) })
 	}
 	return dialRawContext(ctx, c.sshRawClient, addr)
 }

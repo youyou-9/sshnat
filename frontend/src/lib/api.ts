@@ -5,12 +5,14 @@ import * as SettingsService from "@/../bindings/github.com/sshnat/sshnat/app/set
 import type {
   AppInfo,
   CreateTunnelRequest,
+  HostTestResult,
+  UpdateTunnelRequest,
   TunnelView,
 } from "@/../bindings/github.com/sshnat/sshnat/app/models";
 import type { Host as HostModel } from "@/../bindings/github.com/sshnat/sshnat/core/config/models";
 
 export { TunnelService, HostService, SettingsService };
-export type { AppInfo, CreateTunnelRequest, TunnelView };
+export type { AppInfo, CreateTunnelRequest, HostTestResult, UpdateTunnelRequest, TunnelView };
 export type Host = HostModel;
 export type Tunnel = TunnelView; // 运行时视图即隧道条目（含状态字段）
 

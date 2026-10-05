@@ -5,6 +5,7 @@
 package forward
 
 import (
+	"context"
 	"errors"
 	"io"
 	"sync"
@@ -47,6 +48,23 @@ type countingConn struct {
 	readTx bool // true: Read is Tx, Write is Rx; false: Read is Rx, Write is Tx
 }
 
+// CloseWrite/CloseRead preserve half-close semantics of TCP and SSH channels
+// through the traffic-counting wrapper. A full Close fallback is used for
+// transports that do not expose half-close operations.
+func (c *countingConn) CloseWrite() error {
+	if cw, ok := c.ReadWriteCloser.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return c.Close()
+}
+
+func (c *countingConn) CloseRead() error {
+	if cr, ok := c.ReadWriteCloser.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return c.Close()
+}
+
 func (c *countingConn) Read(p []byte) (int, error) {
 	n, err := c.ReadWriteCloser.Read(p)
 	if n > 0 {
@@ -81,19 +99,48 @@ var copyBufferPool = sync.Pool{
 }
 
 // pipeConns 双向搬运两个连接的数据，使用对象池复用 32KB 内存缓冲区以降低 GC 开销。
-// 任一侧结束即关闭双侧，返回时两侧连接均已关闭。
-func pipeConns(a, b io.ReadWriteCloser, t Traffic) {
+// 每个方向结束时优先 half-close 对端写端，确保一侧发送 EOF 后仍能读取
+// 对方已经产生的响应；只有不支持 half-close 的传输才回退到完整关闭。
+func pipeConns(ctx context.Context, a, b io.ReadWriteCloser) {
 	done := make(chan struct{}, 2)
-	copyHalf := func(dst io.WriteCloser, src io.Reader) {
+	var fallback sync.Once
+	closeBoth := func() {
+		fallback.Do(func() {
+			_ = a.Close()
+			_ = b.Close()
+		})
+	}
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		select {
+		case <-ctx.Done():
+			// A normal half-close may legitimately wait for a response. Stop
+			// must still abort both directions, including a target with no EOF.
+			closeBoth()
+		case <-finished:
+		}
+	}()
+	copyHalf := func(dst io.Writer, src io.Reader) {
 		defer func() { done <- struct{}{} }()
 		bufPtr := copyBufferPool.Get().(*[]byte)
 		defer copyBufferPool.Put(bufPtr)
-		_, _ = io.CopyBuffer(dst, src, *bufPtr)
+		_, err := io.CopyBuffer(dst, src, *bufPtr)
+		if err != nil {
+			closeBoth()
+			return
+		}
+		if cw, ok := dst.(interface{ CloseWrite() error }); ok {
+			if err := cw.CloseWrite(); err != nil {
+				closeBoth()
+			}
+		} else {
+			closeBoth()
+		}
 	}
 	go copyHalf(a, b)
 	go copyHalf(b, a)
 	<-done
-	_ = a.Close()
-	_ = b.Close()
 	<-done
+	closeBoth()
 }

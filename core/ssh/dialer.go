@@ -46,11 +46,14 @@ type DialOptions struct {
 	// KnownHostsFile 为 known_hosts 路径；文件不存在时新记录会写入该路径
 	// （accept-new 语义）。为空时使用用户 SSH 目录下的默认文件。
 	KnownHostsFile string
+	// HostKeyPolicy accepts "accept-new" (default) or "strict". Both reject
+	// changed keys; strict also rejects hosts missing from known_hosts.
+	HostKeyPolicy string
 	// InsecureSkipHostKey 跳过 hostkey 校验（仅测试用）。
 	InsecureSkipHostKey bool
 
 	Timeout          time.Duration // TCP/握手超时，默认 15s
-	Keepalive        time.Duration // keepalive 间隔，默认 15s；<=0 禁用
+	Keepalive        time.Duration // keepalive 间隔，0 = 15s 默认值；<0 禁用
 	KeepaliveTimeout time.Duration // 单次 keepalive 应答超时，默认 10s
 }
 
@@ -73,20 +76,22 @@ func (o *DialOptions) timeout() time.Duration {
 type Client struct {
 	sshRawClient
 
-	opts   DialOptions
-	closed chan struct{}
-	once   closeOnce
+	opts      DialOptions
+	closed    chan struct{}
+	once      closeOnce
+	resources []io.Closer
 }
 
 // Dial 建立SSH 连接（含认证与跳板链）。
 func Dial(ctx context.Context, opts DialOptions) (*Client, error) {
-	clientConfig, err := newClientConfig(&opts)
+	clientConfig, resources, err := newClientConfig(&opts)
 	if err != nil {
 		return nil, err
 	}
 
 	raw, err := dialChain(ctx, &opts, clientConfig)
 	if err != nil {
+		closeResources(resources)
 		return nil, err
 	}
 
@@ -94,9 +99,18 @@ func Dial(ctx context.Context, opts DialOptions) (*Client, error) {
 		sshRawClient: raw,
 		opts:         opts,
 		closed:       make(chan struct{}),
+		resources:    resources,
 	}
+	go func() {
+		_ = raw.Wait()
+		// Transport EOF must wake forwarders even when keepalive is disabled.
+		_ = c.Close()
+	}()
 
 	ka := opts.Keepalive
+	if ka == 0 {
+		ka = 15 * time.Second
+	}
 	if ka > 0 {
 		kaTimeout := opts.KeepaliveTimeout
 		if kaTimeout <= 0 {
@@ -138,53 +152,59 @@ func dialChain(ctx context.Context, opts *DialOptions, cfg *sshClientConfig) (ss
 	current := sshRawClient(jumpClient)
 	var upstream io.Closer = jumpClient
 	for _, hop := range opts.JumpHosts[1:] {
-		conn, err := dialRawContext(ctx, current, hop.addr())
+		hopCfg, hopResources, err := newClientConfig(&hop)
 		if err != nil {
-			_ = upstream.Close()
-			return nil, fmt.Errorf("jump->%s: %w", hop.addr(), err)
-		}
-		conn.SetDeadline(time.Now().Add(hop.timeout()))
-		hopCfg, err := newClientConfig(&hop)
-		if err != nil {
-			_ = conn.Close()
 			_ = upstream.Close()
 			return nil, err
 		}
-		cli, err := newClientConn(ctx, conn, hop.addr(), hopCfg)
+		cli, err := dialViaJump(ctx, current, &hop, hopCfg)
 		if err != nil {
-			_ = conn.Close()
 			_ = upstream.Close()
+			closeResources(hopResources)
 			return nil, fmt.Errorf("handshake via jump ->%s: %w", hop.addr(), err)
 		}
-		wrapped := &chainedClient{sshClient: cli, upstream: upstream}
+		wrapped := &chainedClient{sshClient: cli, upstream: upstream, resources: hopResources}
 		current = wrapped
 		upstream = wrapped
 	}
 
-	conn, err := dialRawContext(ctx, current, targetAddr)
+	cli, err := dialViaJump(ctx, current, opts, cfg)
 	if err != nil {
-		_ = upstream.Close()
-		return nil, fmt.Errorf("jump->%s: %w", targetAddr, err)
-	}
-	conn.SetDeadline(time.Now().Add(opts.timeout()))
-	cli, err := newClientConn(ctx, conn, targetAddr, cfg)
-	if err != nil {
-		_ = conn.Close()
 		_ = upstream.Close()
 		return nil, fmt.Errorf("handshake via jump ->%s: %w", targetAddr, err)
 	}
 	return &chainedClient{sshClient: cli, upstream: upstream}, nil
 }
 
+// SSH channel connections ignore net.Conn deadlines. Apply an explicit
+// context deadline to both channel open and handshake for every hop, instead
+// of relying on SetDeadline or only the final destination's timeout.
+func dialViaJump(parent context.Context, upstream sshRawClient, opts *DialOptions, cfg *sshClientConfig) (*sshClient, error) {
+	ctx, cancel := context.WithTimeout(parent, opts.timeout())
+	defer cancel()
+	conn, err := dialRawContext(ctx, upstream, opts.addr())
+	if err != nil {
+		return nil, err
+	}
+	client, err := newClientConn(ctx, conn, opts.addr(), cfg)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return client, nil
+}
+
 // chainedClient 关闭时联动关闭上游跳板连接。
 type chainedClient struct {
 	*sshClient
-	upstream io.Closer
+	upstream  io.Closer
+	resources []io.Closer
 }
 
 func (c *chainedClient) Close() error {
 	err := c.sshClient.Close()
 	_ = c.upstream.Close()
+	closeResources(c.resources)
 	return err
 }
 
@@ -226,6 +246,16 @@ func (c *Client) Done() <-chan struct{} { return c.closed }
 func (c *Client) Close() error {
 	c.once.Do(func() {
 		close(c.closed)
+		_ = c.sshRawClient.Close()
+		closeResources(c.resources)
 	})
-	return c.sshRawClient.Close()
+	return nil
+}
+
+func closeResources(resources []io.Closer) {
+	for _, resource := range resources {
+		if resource != nil {
+			_ = resource.Close()
+		}
+	}
 }

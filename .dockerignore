@@ -1,0 +1,10 @@
+.git
+.github
+.task
+bin
+frontend/node_modules
+frontend/.svelte-kit
+frontend/coverage
+*.log
+*.tmp
+*.tmp.json

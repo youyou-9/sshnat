@@ -6,6 +6,7 @@
   import { app } from "@/lib/state.svelte";
   import { t } from "@/lib/i18n";
   import type { Tunnel } from "@/lib/api";
+  import { copyText } from "@/lib/tunnel-command";
 
   let {
     open = $bindable(false),
@@ -40,15 +41,18 @@
     return "dim";
   }
 
-  function copyLogs() {
+  async function copyLogs() {
     if (tunnelLogs.length === 0) return;
     const text = tunnelLogs
       .map((l) => `[${l.time}] [${tunnel.name}] ${l.message}`)
       .join("\n");
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(text);
-      copied = true;
-      setTimeout(() => (copied = false), 1500);
+    try {
+      if (await copyText(text)) {
+        copied = true;
+        setTimeout(() => (copied = false), 1500);
+      }
+    } catch (error) {
+      console.error("Copy logs failed:", error);
     }
   }
 

@@ -29,9 +29,9 @@ type LocalConfig struct {
 
 // Local 实现 -L：在本地监听，把每个连接经 SSH 转发到目标地址。
 type Local struct {
-	cfg LocalConfig
-	cli *ssh.Client
-	t   Traffic
+	cfg  LocalConfig
+	cli  *ssh.Client
+	t    Traffic
 	logf func(format string, args ...any)
 
 	mu        sync.Mutex
@@ -42,6 +42,10 @@ type Local struct {
 	done      chan struct{}
 	err       error
 	closeOnce sync.Once
+	ctx       context.Context
+	cancel    context.CancelFunc
+	workers   sync.WaitGroup
+	socket    os.FileInfo // identity of the socket created by this listener
 }
 
 // NewLocal 创建本地转发器。调用 Start 前不占用任何资源。
@@ -52,12 +56,15 @@ func NewLocal(cli *ssh.Client, cfg LocalConfig, t Traffic) *Local {
 	if cfg.TargetNetwork == "" {
 		cfg.TargetNetwork = "tcp"
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Local{
-		cfg:   cfg,
-		cli:   cli,
-		t:     t,
-		conns: make(map[net.Conn]struct{}),
-		done:  make(chan struct{}),
+		cfg:    cfg,
+		cli:    cli,
+		t:      t,
+		conns:  make(map[net.Conn]struct{}),
+		done:   make(chan struct{}),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 
@@ -70,6 +77,9 @@ func (f *Local) Start() error {
 	if f.started {
 		return errors.New("forward: already started")
 	}
+	if f.cli == nil {
+		return errors.New("forward: SSH client is nil")
+	}
 
 	var ln net.Listener
 	var err error
@@ -78,10 +88,9 @@ func (f *Local) Start() error {
 		if err := os.MkdirAll(filepath.Dir(f.cfg.ListenAddr), 0o755); err != nil {
 			return fmt.Errorf("forward: create socket dir: %w", err)
 		}
-		// 清理残留 socket 文件。
-		if fi, serr := os.Stat(f.cfg.ListenAddr); serr == nil && (fi.Mode()&os.ModeSocket != 0 || fi.Mode().IsRegular()) {
-			_ = os.Remove(f.cfg.ListenAddr)
-		}
+		// Do not unlink an existing path, even a socket: it may be a live
+		// listener belonging to another application. Stale sockets must be
+		// removed explicitly by their owner before this listener can start.
 		ln, err = net.Listen("unix", f.cfg.ListenAddr)
 	default:
 		ln, err = net.Listen("tcp", f.cfg.ListenAddr)
@@ -91,7 +100,14 @@ func (f *Local) Start() error {
 	}
 
 	f.listener = ln
+	if unixListener, ok := ln.(*net.UnixListener); ok {
+		// Go normally unlinks by pathname on Close. Record the identity and
+		// clean up only that socket, so a replaced file/socket is preserved.
+		unixListener.SetUnlinkOnClose(false)
+		f.socket, _ = os.Lstat(f.cfg.ListenAddr)
+	}
 	f.started = true
+	f.workers.Add(1)
 	go f.acceptLoop(ln)
 	go f.watchClient()
 	return nil
@@ -114,6 +130,7 @@ func (f *Local) watchClient() {
 }
 
 func (f *Local) acceptLoop(ln net.Listener) {
+	defer f.workers.Done()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -134,6 +151,7 @@ func (f *Local) acceptLoop(ln net.Listener) {
 			return
 		}
 		f.conns[conn] = struct{}{}
+		f.workers.Add(1)
 		f.mu.Unlock()
 
 		go f.handle(conn)
@@ -149,6 +167,7 @@ func (f *Local) SetLogger(l func(format string, args ...any)) {
 
 // handle 把一个入站连接经 SSH 拨到目标并双向搬运。
 func (f *Local) handle(inbound net.Conn) {
+	defer f.workers.Done()
 	defer func() {
 		f.mu.Lock()
 		delete(f.conns, inbound)
@@ -183,7 +202,7 @@ func (f *Local) handle(inbound net.Conn) {
 	// written back to the local side are received traffic (Rx).
 	// Only wrap inbound to ensure each byte in either direction is counted exactly once.
 	cin := &countingConn{ReadWriteCloser: inbound, t: f.t, readTx: true}
-	pipeConns(cin, target, f.t)
+	pipeConns(f.ctx, cin, target)
 
 	f.t.ConnClosed()
 	if logger != nil {
@@ -193,25 +212,26 @@ func (f *Local) handle(inbound net.Conn) {
 
 // dialTarget 根据配置拨向 TCP 地址或服务器侧 Unix socket，带 10 秒超时。
 func (f *Local) dialTarget() (net.Conn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
 	defer cancel()
 
-	if f.cfg.TargetNetwork == "unix" {
-		return f.cli.DialUnix(f.cfg.TargetAddr)
-	}
-	return f.cli.DialContext(ctx, "tcp", f.cfg.TargetAddr)
+	return f.cli.DialContext(ctx, f.cfg.TargetNetwork, f.cfg.TargetAddr)
 }
 
 // Stop 关闭监听器与所有活跃连接，幂等。
 func (f *Local) Stop() error {
 	f.finish()
+	<-f.done
 	return nil
 }
 
 func (f *Local) finish() {
 	f.closeOnce.Do(func() {
 		_ = f.StopNoFinish()
-		close(f.done)
+		go func() {
+			f.workers.Wait()
+			close(f.done)
+		}()
 	})
 }
 
@@ -219,7 +239,9 @@ func (f *Local) finish() {
 func (f *Local) StopNoFinish() error {
 	f.mu.Lock()
 	f.stopped = true
+	f.cancel()
 	ln := f.listener
+	socket := f.socket
 	conns := make([]net.Conn, 0, len(f.conns))
 	for c := range f.conns {
 		conns = append(conns, c)
@@ -232,8 +254,10 @@ func (f *Local) StopNoFinish() error {
 	for _, c := range conns {
 		_ = c.Close()
 	}
-	if f.cfg.ListenNetwork == "unix" && f.cfg.ListenAddr != "" {
-		_ = os.Remove(f.cfg.ListenAddr)
+	if socket != nil {
+		if current, err := os.Lstat(f.cfg.ListenAddr); err == nil && os.SameFile(socket, current) {
+			_ = os.Remove(f.cfg.ListenAddr)
+		}
 	}
 	return nil
 }

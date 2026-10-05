@@ -14,6 +14,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // @ts-ignore: Unused imports
 import * as config$0 from "../core/config/models.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
 /**
  * Delete 删除主机（引用它的隧道一并删除）。
  */
@@ -33,4 +37,14 @@ export function List(): $CancellablePromise<config$0.Host[] | null> {
  */
 export function Save(host: config$0.Host): $CancellablePromise<void> {
     return $Call.ByID(2520353641, host);
+}
+
+/**
+ * TestConnection performs a bounded, one-shot SSH handshake for a saved host.
+ * It follows the same ProxyJump/authentication/host-key path as tunnels, but
+ * does not register a runtime tunnel and closes the client immediately after
+ * a successful handshake.
+ */
+export function TestConnection(id: string): $CancellablePromise<$models.HostTestResult | null> {
+    return $Call.ByID(1672373696, id);
 }

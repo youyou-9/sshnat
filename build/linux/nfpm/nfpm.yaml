@@ -6,22 +6,24 @@
 name: "sshnat"
 arch: ${GOARCH}
 platform: "linux"
-version: "0.1.0"
+version: "1.1.0"
 section: "default"
 priority: "extra"
-maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
+maintainer: "SSHNat contributors"
 description: "SSH port forwarding client"
 vendor: "SSHNat"
-homepage: "https://github.com/sshnat/sshnat"
+homepage: "https://github.com/youyou-9/sshnat"
 license: "MIT"
 release: "1"
 
 contents:
   - src: "./bin/sshnat"
     dst: "/usr/local/bin/sshnat"
+    file_info:
+      mode: 0755
   - src: "./build/appicon.png"
     dst: "/usr/share/icons/hicolor/128x128/apps/sshnat.png"
-  - src: "./build/linux/desktop"
+  - src: "./build/linux/sshnat.desktop"
     dst: "/usr/share/applications/sshnat.desktop"
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)
@@ -50,21 +52,8 @@ scripts:
   # preremove: "./build/linux/nfpm/scripts/preremove.sh"
   # postremove: "./build/linux/nfpm/scripts/postremove.sh"
 
-# If you build your app with -tags gtk3 (legacy WebKit2GTK 4.1 stack — supported through v3.0.x, removed in v3.1),
-# replace the depends/overrides above with these:
-#
-# depends:
-#   - libgtk-3-0
-#   - libwebkit2gtk-4.1-0
-# overrides:
-#   rpm:
-#     depends:
-#       - gtk3
-#       - webkit2gtk4.1
-#   archlinux:
-#     depends:
-#       - gtk3
-#       - webkit2gtk-4.1
+# Linux package tasks automatically select nfpm-gtk3.yaml when EXTRA_TAGS
+# contains gtk3. Keep the build and packaging tasks on the same tag set.
 #
 # replaces:
 #   - foobar

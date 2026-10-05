@@ -28,12 +28,21 @@ func buildDialOptionsRec(settings *config.Settings, host config.Host, visiting m
 		Port:           host.Port,
 		User:           host.User,
 		KnownHostsFile: host.KnownHostsFile,
+		HostKeyPolicy:  host.HostKeyPolicy,
+		Timeout:        time.Duration(host.ConnectTimeoutSeconds) * time.Second,
 	}
 	if opts.KnownHostsFile == "" {
 		opts.KnownHostsFile = defaultKnownHosts
 	}
-	if host.KeepaliveSeconds > 0 {
+	// A zero value means "use the documented default", rather than silently
+	// disabling health checks. A negative value can explicitly disable it in a
+	// hand-written configuration.
+	if host.KeepaliveSeconds == 0 {
+		opts.Keepalive = 15 * time.Second
+	} else if host.KeepaliveSeconds > 0 {
 		opts.Keepalive = time.Duration(host.KeepaliveSeconds) * time.Second
+	} else {
+		opts.Keepalive = -1
 	}
 
 	switch host.Auth.Method {
@@ -60,7 +69,7 @@ func buildDialOptionsRec(settings *config.Settings, host config.Host, visiting m
 	if n := len(host.JumpHostIDs); n > 0 {
 		opts.JumpHosts = make([]ssh.DialOptions, 0, n)
 		for _, jid := range host.JumpHostIDs {
-			if jid == "" || jid == host.ID {
+			if jid == "" {
 				continue
 			}
 			if visiting[jid] {

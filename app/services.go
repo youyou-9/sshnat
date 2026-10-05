@@ -5,21 +5,26 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/sshnat/sshnat/core/config"
 	"github.com/sshnat/sshnat/core/stats"
 	"github.com/sshnat/sshnat/core/supervisor"
+	"github.com/sshnat/sshnat/internal/version"
 )
 
 // Wails 事件名。
 const (
-	EventTunnelStatus = "sshnat:tunnel-status"
-	EventTunnelStats  = "sshnat:tunnel-stats"
-	EventLog          = "sshnat:log"
+	EventTunnelStatus  = "sshnat:tunnel-status"
+	EventTunnelStats   = "sshnat:tunnel-stats"
+	EventLog           = "sshnat:log"
+	EventConfigChanged = "sshnat:config-changed"
 )
 
 // Emitter 由 main 装配：把 core 事件转发到前端。
@@ -50,6 +55,7 @@ type CreateTunnelRequest struct {
 
 	RemoteBindHost string `json:"remoteBindHost,omitempty"`
 	RemotePort     int    `json:"remotePort,omitempty"`
+	RemoteSocket   string `json:"remoteSocket,omitempty"`
 
 	SocksPort int  `json:"socksPort,omitempty"`
 	AutoStart bool `json:"autoStart"`
@@ -57,10 +63,10 @@ type CreateTunnelRequest struct {
 
 // UpdateTunnelRequest 是编辑隧道的提交载荷。
 type UpdateTunnelRequest struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	HostID         string `json:"hostId"`
-	Type           string `json:"type"` // L | R | D
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	HostID string `json:"hostId"`
+	Type   string `json:"type"` // L | R | D
 
 	LocalBindHost string `json:"localBindHost,omitempty"`
 	LocalPort     int    `json:"localPort,omitempty"`
@@ -72,6 +78,7 @@ type UpdateTunnelRequest struct {
 
 	RemoteBindHost string `json:"remoteBindHost,omitempty"`
 	RemotePort     int    `json:"remotePort,omitempty"`
+	RemoteSocket   string `json:"remoteSocket,omitempty"`
 
 	SocksPort int  `json:"socksPort,omitempty"`
 	AutoStart bool `json:"autoStart"`
@@ -84,10 +91,12 @@ type Services struct {
 	Stats *stats.Registry
 
 	// Emit 在 main 中装配。
-	emit Emitter
-	emu  sync.RWMutex
+	emit         Emitter
+	emu          sync.RWMutex
+	chooseExport func() (string, error)
 
-	tmu sync.Mutex // 保护配置文件读写串行化
+	tmu     sync.Mutex // 保护配置文件读写串行化
+	closing bool       // also protected by tmu; shutdown rejects queued starts
 }
 
 // TunnelService 暴露隧道 CRUD 与启停。
@@ -95,6 +104,19 @@ type TunnelService struct{ s *Services }
 
 // HostService 暴露主机 CRUD 与连通性测试。
 type HostService struct{ s *Services }
+
+// HostTestResult reports the outcome of a one-shot SSH connectivity check.
+// A failed SSH handshake is represented in the result instead of as an RPC
+// error so the UI can show a useful per-host status while keeping malformed
+// requests (for example an unknown host ID) as regular API errors.
+type HostTestResult struct {
+	HostID     string `json:"hostId"`
+	Success    bool   `json:"success"`
+	DurationMs int64  `json:"durationMs"`
+	Error      string `json:"error,omitempty"`
+}
+
+const hostTestTimeout = 15 * time.Second
 
 // SettingsService 暴露应用级设置。
 type SettingsService struct{ s *Services }
@@ -182,10 +204,11 @@ func (t *TunnelService) Create(req CreateTunnelRequest) (*TunnelView, error) {
 		TargetSocket:   req.TargetSocket,
 		RemoteBindHost: req.RemoteBindHost,
 		RemotePort:     req.RemotePort,
+		RemoteSocket:   req.RemoteSocket,
 		SocksPort:      req.SocksPort,
 		AutoStart:      req.AutoStart,
 	}
-	if tun.TargetHost == "" && (tun.Type == config.TypeLocal || tun.Type == config.TypeRemote) {
+	if tun.TargetHost == "" && tun.TargetSocket == "" && (tun.Type == config.TypeLocal || tun.Type == config.TypeRemote) {
 		tun.TargetHost = "127.0.0.1"
 	}
 	settings.Tunnels = append(settings.Tunnels, tun)
@@ -197,6 +220,7 @@ func (t *TunnelService) Create(req CreateTunnelRequest) (*TunnelView, error) {
 
 	view := t.view(&tun)
 	log.Printf("[app] tunnel created: %s (%s)", tun.ID, tun.Name)
+	t.s.emitConfigChanged()
 	return view, nil
 }
 
@@ -214,6 +238,7 @@ func (t *TunnelService) Update(req UpdateTunnelRequest) (*TunnelView, error) {
 		TargetSocket:   req.TargetSocket,
 		RemoteBindHost: req.RemoteBindHost,
 		RemotePort:     req.RemotePort,
+		RemoteSocket:   req.RemoteSocket,
 		SocksPort:      req.SocksPort,
 		AutoStart:      req.AutoStart,
 	}
@@ -221,21 +246,39 @@ func (t *TunnelService) Update(req UpdateTunnelRequest) (*TunnelView, error) {
 		return nil, err
 	}
 
-	wasRunning := t.s.Sup.IsRunning(req.ID)
+	// Validate the target tunnel and host before stopping a running tunnel.
+	// A typo in an update request must not stop a healthy tunnel first.
+	t.s.tmu.Lock()
+	changed := false
+	defer func() {
+		t.s.tmu.Unlock()
+		if changed {
+			t.s.emitConfigChanged()
+		}
+	}()
+	currentSettings, err := t.s.Store.Load()
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := currentSettings.FindTunnel(req.ID); !ok {
+		return nil, fmt.Errorf("tunnel %s not found", req.ID)
+	}
+	if _, ok := currentSettings.FindHost(req.HostID); !ok {
+		return nil, fmt.Errorf("host %s not found", req.HostID)
+	}
+
+	wasRunning := t.s.Sup.HasActiveRun(req.ID)
 	if wasRunning {
 		if err := t.s.Sup.Stop(req.ID); err != nil && !errors.Is(err, supervisor.ErrNotRunning) {
 			return nil, fmt.Errorf("stop running tunnel for update: %w", err)
 		}
 	}
 
-	t.s.tmu.Lock()
 	settings, err := t.s.Store.Load()
 	if err != nil {
-		t.s.tmu.Unlock()
 		return nil, err
 	}
 	if _, ok := settings.FindHost(req.HostID); !ok {
-		t.s.tmu.Unlock()
 		return nil, fmt.Errorf("host %s not found", req.HostID)
 	}
 
@@ -256,10 +299,11 @@ func (t *TunnelService) Update(req UpdateTunnelRequest) (*TunnelView, error) {
 				TargetSocket:   req.TargetSocket,
 				RemoteBindHost: req.RemoteBindHost,
 				RemotePort:     req.RemotePort,
+				RemoteSocket:   req.RemoteSocket,
 				SocksPort:      req.SocksPort,
 				AutoStart:      req.AutoStart,
 			}
-			if settings.Tunnels[i].TargetHost == "" && (settings.Tunnels[i].Type == config.TypeLocal || settings.Tunnels[i].Type == config.TypeRemote) {
+			if settings.Tunnels[i].TargetHost == "" && settings.Tunnels[i].TargetSocket == "" && (settings.Tunnels[i].Type == config.TypeLocal || settings.Tunnels[i].Type == config.TypeRemote) {
 				settings.Tunnels[i].TargetHost = "127.0.0.1"
 			}
 			updated = &settings.Tunnels[i]
@@ -268,18 +312,19 @@ func (t *TunnelService) Update(req UpdateTunnelRequest) (*TunnelView, error) {
 		}
 	}
 	if !found {
-		t.s.tmu.Unlock()
 		return nil, fmt.Errorf("tunnel %s not found", req.ID)
 	}
 
 	err = t.s.Store.Save(settings)
-	t.s.tmu.Unlock()
 	if err != nil {
 		return nil, err
 	}
+	changed = true
 
 	if wasRunning {
-		_ = t.s.Sup.Start(req.ID)
+		if err := t.s.Sup.Start(req.ID); err != nil {
+			return nil, fmt.Errorf("restart updated tunnel: %w", err)
+		}
 	}
 
 	log.Printf("[app] tunnel updated: %s (%s)", req.ID, req.Name)
@@ -289,7 +334,13 @@ func (t *TunnelService) Update(req UpdateTunnelRequest) (*TunnelView, error) {
 // CreateFromSSHCommand 解析 `ssh -L ... user@host` 并创建主机 + 隧道。
 // 返回新建的隧道视图列表。
 func (t *TunnelService) CreateFromSSHCommand(cmd string) ([]TunnelView, error) {
-	args, err := splitCommand(cmd)
+	return t.CreateFromSSHCommandForShell(cmd, "")
+}
+
+// CreateFromSSHCommandForShell imports a command quoted for posix or
+// powershell. An empty shell keeps the operating system's default.
+func (t *TunnelService) CreateFromSSHCommandForShell(cmd, shell string) ([]TunnelView, error) {
+	args, err := splitCommandForShell(cmd, shell)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +348,10 @@ func (t *TunnelService) CreateFromSSHCommand(cmd string) ([]TunnelView, error) {
 	if err != nil {
 		return nil, err
 	}
-	host, tunnels := config.SpecToSettings(spec)
+	host, jumpHosts, tunnels, err := config.SpecToSettingsWithJumps(spec)
+	if err != nil {
+		return nil, err
+	}
 
 	t.s.tmu.Lock()
 	settings, err := t.s.Store.Load()
@@ -305,9 +359,36 @@ func (t *TunnelService) CreateFromSSHCommand(cmd string) ([]TunnelView, error) {
 		t.s.tmu.Unlock()
 		return nil, err
 	}
+	// Reuse existing jump hosts by address, while preserving the imported
+	// ProxyJump order on the destination host.
+	jumpIDs := make([]string, 0, len(jumpHosts))
+	for i := range jumpHosts {
+		jump := jumpHosts[i]
+		if jump.Host == host.Host && jump.Port == host.Port && jump.User == host.User {
+			t.s.tmu.Unlock()
+			return nil, fmt.Errorf("ProxyJump chain cannot reference destination host")
+		}
+		if existing, ok := findHostByAddr(settings, jump.Host, jump.Port, jump.User); ok {
+			jumpIDs = append(jumpIDs, existing.ID)
+			continue
+		}
+		settings.Hosts = append(settings.Hosts, jump)
+		jumpIDs = append(jumpIDs, jump.ID)
+	}
+	host.JumpHostIDs = jumpIDs
 	// 同名主机复用，避免重复条目。
 	if existing, ok := findHostByAddr(settings, host.Host, host.Port, host.User); ok {
 		*host = existing
+		spec.ApplyHostOptions(host)
+		if len(jumpIDs) > 0 {
+			host.JumpHostIDs = jumpIDs
+		}
+		for i := range settings.Hosts {
+			if settings.Hosts[i].ID == host.ID {
+				settings.Hosts[i] = *host
+				break
+			}
+		}
 	} else {
 		settings.Hosts = append(settings.Hosts, *host)
 	}
@@ -325,6 +406,7 @@ func (t *TunnelService) CreateFromSSHCommand(cmd string) ([]TunnelView, error) {
 	for i := range tunnels {
 		views = append(views, *t.view(&tunnels[i]))
 	}
+	t.s.emitConfigChanged()
 	return views, nil
 }
 
@@ -355,20 +437,33 @@ func (t *TunnelService) Get(id string) (*TunnelView, error) {
 }
 
 // Start 启动隧道。
-func (t *TunnelService) Start(id string) error { return t.s.Sup.Start(id) }
+func (t *TunnelService) Start(id string) error {
+	t.s.tmu.Lock()
+	defer t.s.tmu.Unlock()
+	if t.s.closing {
+		return errors.New("application is shutting down")
+	}
+	return t.s.Sup.Start(id)
+}
 
 // Stop 停止隧道。
 func (t *TunnelService) Stop(id string) error { return t.s.Sup.Stop(id) }
 
 // Delete 删除隧道（运行中会先停止）。
 func (t *TunnelService) Delete(id string) error {
-	if t.s.Sup.IsRunning(id) {
+	t.s.tmu.Lock()
+	changed := false
+	defer func() {
+		t.s.tmu.Unlock()
+		if changed {
+			t.s.emitConfigChanged()
+		}
+	}()
+	if t.s.Sup.HasActiveRun(id) {
 		if err := t.s.Sup.Stop(id); err != nil && !errors.Is(err, supervisor.ErrNotRunning) {
 			return err
 		}
 	}
-	t.s.tmu.Lock()
-	defer t.s.tmu.Unlock()
 	settings, err := t.s.Store.Load()
 	if err != nil {
 		return err
@@ -390,6 +485,7 @@ func (t *TunnelService) Delete(id string) error {
 		return err
 	}
 	t.s.Stats.Delete(id)
+	changed = true
 	return nil
 }
 
@@ -400,6 +496,7 @@ func (t *TunnelService) view(tun *config.Tunnel) *TunnelView {
 		Tunnel:  *tun,
 		Status:  string(st),
 		Running: t.s.Sup.IsRunning(tun.ID) && st != supervisor.StatusError && st != supervisor.StatusStopped,
+		Error:   t.s.Sup.Error(tun.ID),
 	}
 	if st == supervisor.StatusError || st == supervisor.StatusReconnecting {
 		// 错误详情由事件携带，这里仅标记状态。
@@ -411,14 +508,20 @@ func (t *TunnelService) view(tun *config.Tunnel) *TunnelView {
 }
 
 func validateCreate(req *CreateTunnelRequest) error {
-	if req.Name == "" {
+	if strings.TrimSpace(req.Name) == "" {
 		return errors.New("tunnel name is required")
 	}
-	if req.HostID == "" {
+	if strings.TrimSpace(req.HostID) == "" {
 		return errors.New("host is required")
 	}
 	switch req.Type {
 	case config.TypeLocal:
+		if req.LocalSocket != "" && req.LocalPort != 0 {
+			return errors.New("local port and local socket are mutually exclusive")
+		}
+		if req.TargetSocket != "" && (req.TargetHost != "" || req.TargetPort != 0) {
+			return errors.New("target port and target socket are mutually exclusive")
+		}
 		if req.LocalPort == 0 && req.LocalSocket == "" {
 			return errors.New("local port or socket is required")
 		}
@@ -432,16 +535,22 @@ func validateCreate(req *CreateTunnelRequest) error {
 			return errors.New("target port must be between 1 and 65535")
 		}
 	case config.TypeRemote:
-		if req.RemotePort == 0 {
-			return errors.New("remote port is required")
+		if req.RemoteSocket != "" && req.RemotePort != 0 {
+			return errors.New("remote port and remote socket are mutually exclusive")
 		}
-		if !validPort(req.RemotePort) {
+		if req.TargetSocket != "" && (req.TargetHost != "" || req.TargetPort != 0) {
+			return errors.New("target port and target socket are mutually exclusive")
+		}
+		if req.RemotePort == 0 && req.RemoteSocket == "" {
+			return errors.New("remote port or socket is required")
+		}
+		if req.RemoteSocket == "" && !validPort(req.RemotePort) {
 			return errors.New("remote port must be between 1 and 65535")
 		}
-		if req.TargetPort == 0 {
-			return errors.New("target port is required")
+		if req.TargetPort == 0 && req.TargetSocket == "" {
+			return errors.New("target port or socket is required")
 		}
-		if !validPort(req.TargetPort) {
+		if req.TargetSocket == "" && !validPort(req.TargetPort) {
 			return errors.New("target port must be between 1 and 65535")
 		}
 	case config.TypeDynamic:
@@ -477,10 +586,67 @@ func (h *HostService) List() ([]config.Host, error) {
 	return settings.Hosts, nil
 }
 
+// TestConnection performs a bounded, one-shot SSH handshake for a saved host.
+// It follows the same ProxyJump/authentication/host-key path as tunnels, but
+// does not register a runtime tunnel and closes the client immediately after
+// a successful handshake.
+func (h *HostService) TestConnection(id string) (*HostTestResult, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, errors.New("host id is required")
+	}
+
+	h.s.tmu.Lock()
+	settings, err := h.s.Store.Load()
+	if err != nil {
+		h.s.tmu.Unlock()
+		return nil, err
+	}
+	host, ok := settings.FindHost(id)
+	if !ok {
+		h.s.tmu.Unlock()
+		return nil, fmt.Errorf("host %s not found", id)
+	}
+	// Copy the value before releasing the configuration lock. Dialing can take
+	// several seconds and must not block saves or other host operations.
+	hostCopy := *host
+	h.s.tmu.Unlock()
+
+	started := time.Now()
+	result := &HostTestResult{HostID: id}
+	timeout := hostTestTimeout
+	if hostCopy.ConnectTimeoutSeconds > 0 {
+		timeout = time.Duration(hostCopy.ConnectTimeoutSeconds) * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	dialErr := h.s.Sup.TestHost(ctx, hostCopy)
+	result.DurationMs = time.Since(started).Milliseconds()
+	if dialErr != nil {
+		result.Error = dialErr.Error()
+		return result, nil
+	}
+	result.Success = true
+	return result, nil
+}
+
 // Save 创建或更新主机。
 func (h *HostService) Save(host config.Host) error {
-	if host.Name == "" || host.Host == "" || host.User == "" {
+	if err := config.ValidateHost(host); err != nil {
+		return err
+	}
+	if strings.TrimSpace(host.Name) == "" || strings.TrimSpace(host.Host) == "" || strings.TrimSpace(host.User) == "" {
 		return errors.New("host name, address and user are required")
+	}
+	switch host.Auth.Method {
+	case "", config.AuthMethodPassword:
+	case config.AuthMethodKey:
+		if strings.TrimSpace(host.Auth.KeyPath) == "" {
+			return errors.New("key authentication requires a key path")
+		}
+	case config.AuthMethodAgent:
+	default:
+		return fmt.Errorf("unknown auth method %q", host.Auth.Method)
 	}
 	if host.Port == 0 {
 		host.Port = 22
@@ -489,13 +655,22 @@ func (h *HostService) Save(host config.Host) error {
 		return errors.New("host port must be between 1 and 65535")
 	}
 	h.s.tmu.Lock()
-	defer h.s.tmu.Unlock()
+	changed := false
+	defer func() {
+		h.s.tmu.Unlock()
+		if changed {
+			h.s.emitConfigChanged()
+		}
+	}()
 	settings, err := h.s.Store.Load()
 	if err != nil {
 		return err
 	}
 	if host.ID == "" {
 		host.ID = config.NewID("host")
+		if err := validateJumpHosts(settings, host); err != nil {
+			return err
+		}
 		settings.Hosts = append(settings.Hosts, host)
 	} else {
 		found := false
@@ -509,8 +684,13 @@ func (h *HostService) Save(host config.Host) error {
 		if !found {
 			return fmt.Errorf("host %s not found", host.ID)
 		}
+		if err := validateJumpHosts(settings, host); err != nil {
+			return err
+		}
 	}
-	return h.s.Store.Save(settings)
+	err = h.s.Store.Save(settings)
+	changed = err == nil
+	return err
 }
 
 // Delete 删除主机（引用它的隧道一并删除）。
@@ -518,9 +698,15 @@ func (h *HostService) Delete(id string) error {
 	// Stop matching runtime tunnels before removing their configuration. This
 	// prevents an orphaned listener from surviving a host deletion.
 	h.s.tmu.Lock()
+	changed := false
+	defer func() {
+		h.s.tmu.Unlock()
+		if changed {
+			h.s.emitConfigChanged()
+		}
+	}()
 	settings, err := h.s.Store.Load()
 	if err != nil {
-		h.s.tmu.Unlock()
 		return err
 	}
 	deleted := false
@@ -531,7 +717,6 @@ func (h *HostService) Delete(id string) error {
 		}
 	}
 	if !deleted {
-		h.s.tmu.Unlock()
 		return fmt.Errorf("host %s not found", id)
 	}
 	var tunnelIDs []string
@@ -540,15 +725,12 @@ func (h *HostService) Delete(id string) error {
 			tunnelIDs = append(tunnelIDs, tun.ID)
 		}
 	}
-	h.s.tmu.Unlock()
 	for _, tunnelID := range tunnelIDs {
 		if err := h.s.Sup.Stop(tunnelID); err != nil && !errors.Is(err, supervisor.ErrNotRunning) {
 			return err
 		}
 	}
 
-	h.s.tmu.Lock()
-	defer h.s.tmu.Unlock()
 	settings, err = h.s.Store.Load()
 	if err != nil {
 		return err
@@ -580,10 +762,43 @@ func (h *HostService) Delete(id string) error {
 	for _, tunnelID := range tunnelIDs {
 		h.s.Stats.Delete(tunnelID)
 	}
+	changed = true
 	return nil
 }
 
 func validPort(port int) bool { return port > 0 && port <= 65535 }
+
+// validateJumpHosts rejects dangling, self-referential, and cyclic ProxyJump
+// references at save time rather than waiting until a tunnel starts.
+func validateJumpHosts(settings *config.Settings, candidate config.Host) error {
+	known := make(map[string]config.Host, len(settings.Hosts)+1)
+	for _, h := range settings.Hosts {
+		known[h.ID] = h
+	}
+	known[candidate.ID] = candidate
+	var visit func(string, map[string]bool) error
+	visit = func(id string, path map[string]bool) error {
+		if path[id] {
+			return errors.New("host jump chain contains a cycle")
+		}
+		h, ok := known[id]
+		if !ok {
+			return fmt.Errorf("jump host %s not found", id)
+		}
+		path[id] = true
+		for _, next := range h.JumpHostIDs {
+			if next == "" {
+				continue
+			}
+			if err := visit(next, path); err != nil {
+				return err
+			}
+		}
+		delete(path, id)
+		return nil
+	}
+	return visit(candidate.ID, map[string]bool{})
+}
 
 // ---------- SettingsService ----------
 
@@ -597,8 +812,8 @@ type AppInfo struct {
 // Get 返回应用信息。
 func (st *SettingsService) Get() (*AppInfo, error) {
 	return &AppInfo{
-		Name:       "SSHNat",
-		Version:    "1.0.0",
+		Name:       version.Name,
+		Version:    version.Current(),
 		ConfigPath: st.s.Store.Path(),
 	}, nil
 }
@@ -608,6 +823,13 @@ func (s *Services) SetEmitter(e Emitter) {
 	s.emu.Lock()
 	defer s.emu.Unlock()
 	s.emit = e
+}
+
+// SetExportChooser connects the native save dialog without coupling core to UI.
+func (s *Services) SetExportChooser(choose func() (string, error)) {
+	s.emu.Lock()
+	defer s.emu.Unlock()
+	s.chooseExport = choose
 }
 
 // 公开构造，供 main 传递给 Wails 绑定。

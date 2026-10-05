@@ -2,15 +2,20 @@
 // 它只依赖 core/，用于验证核心库与 UI 层完全解耦：
 //
 //	sshnatd -config ./config.json -all
-//	sshnatd -config ./config.json -tunnel tnl-1 -once
+//	sshnatd -config ./config.json -tunnel tnl-1
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"os"
 	"os/signal"
+	"os/user"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -19,17 +24,33 @@ import (
 	"github.com/sshnat/sshnat/core/config"
 	"github.com/sshnat/sshnat/core/stats"
 	"github.com/sshnat/sshnat/core/supervisor"
+	"github.com/sshnat/sshnat/internal/version"
 )
 
 func main() {
-	cfgPath := flag.String("config", "", "配置文件路径（默认 ~/.config/sshnat/config.json）")
+	cfgPath := flag.String("config", "", "配置文件路径（默认便携目录或系统用户配置目录）")
 	tunnelIDs := flag.String("tunnel", "", "要启动的隧道 ID，逗号分隔")
 	startAll := flag.Bool("all", false, "启动配置中的所有隧道")
 	autoStart := flag.Bool("auto", true, "启动标记了 autoStart 的隧道")
 	createFrom := flag.String("from-ssh-cmd", "", "解析 `ssh -L ... user@host` 命令并写入配置后退出")
 	listenAddrHint := flag.String("listen", "", "提示信息用：期望的本地监听地址（不影响行为）")
 	statsEvery := flag.Duration("stats-interval", time.Second, "流量统计事件间隔")
+	showVersion := flag.Bool("version", false, "打印版本并退出")
+	checkConfig := flag.Bool("check", false, "仅校验配置后退出（不联网或启动隧道）")
 	flag.Parse()
+	if *showVersion {
+		fmt.Printf("%s %s\n", version.Name, version.Current())
+		return
+	}
+	if flag.NArg() != 0 {
+		log.Fatalf("unexpected positional arguments: %s", strings.Join(flag.Args(), " "))
+	}
+	if *startAll && strings.TrimSpace(*tunnelIDs) != "" {
+		log.Fatal("-all and -tunnel cannot be used together")
+	}
+	if *checkConfig && *createFrom != "" {
+		log.Fatal("-check and -from-ssh-cmd cannot be used together")
+	}
 
 	if *listenAddrHint != "" {
 		log.Printf("listen hint: %s", *listenAddrHint)
@@ -47,18 +68,71 @@ func main() {
 
 	// --from-ssh-cmd：粘贴 OpenSSH 命令行生成配置（演示 config 解析器能力）。
 	if *createFrom != "" {
-		args := splitShellish(*createFrom)
+		args, splitErr := splitShellish(*createFrom)
+		if splitErr != nil {
+			log.Fatalf("split ssh command: %v", splitErr)
+		}
 		spec, err := config.ParseSSHCommand(args)
 		if err != nil {
 			log.Fatalf("parse ssh command: %v", err)
 		}
-		host, tunnels := config.SpecToSettings(spec)
-		st, err := store.Load()
+		// OpenSSH uses the local account name when user@ or -l is omitted.
+		// Preserve that behavior so imported configs pass structural validation.
+		if spec.User == "" {
+			current, err := user.Current()
+			if err != nil {
+				log.Fatalf("resolve SSH user (or specify user@host): %v", err)
+			}
+			spec.User = current.Username
+			if i := strings.LastIndexAny(spec.User, `/\\`); i >= 0 {
+				spec.User = spec.User[i+1:]
+			}
+		}
+		host, jumpHosts, tunnels, err := config.SpecToSettingsWithJumps(spec)
 		if err != nil {
+			log.Fatalf("convert ssh command: %v", err)
+		}
+		st, err := readDaemonSettings(path)
+		if errors.Is(err, os.ErrNotExist) {
+			st = &config.Settings{Version: 1}
+		} else if err != nil {
 			log.Fatalf("load config: %v", err)
 		}
-		st.Hosts = append(st.Hosts, *host)
-		st.Tunnels = append(st.Tunnels, tunnels...)
+		jumpIDs := make([]string, 0, len(jumpHosts))
+		for i := range jumpHosts {
+			jump := jumpHosts[i]
+			if jump.Host == host.Host && jump.Port == host.Port && jump.User == host.User {
+				log.Fatalf("ProxyJump chain cannot reference destination host")
+			}
+			if existing, ok := findHostByAddr(st, jump.Host, jump.Port, jump.User); ok {
+				jumpIDs = append(jumpIDs, existing.ID)
+			} else {
+				st.Hosts = append(st.Hosts, jump)
+				jumpIDs = append(jumpIDs, jump.ID)
+			}
+		}
+		host.JumpHostIDs = jumpIDs
+		if existing, ok := findHostByAddr(st, host.Host, host.Port, host.User); ok {
+			*host = existing
+			if len(jumpIDs) > 0 {
+				host.JumpHostIDs = jumpIDs
+				for i := range st.Hosts {
+					if st.Hosts[i].ID == host.ID {
+						st.Hosts[i].JumpHostIDs = jumpIDs
+						break
+					}
+				}
+			}
+		} else {
+			st.Hosts = append(st.Hosts, *host)
+		}
+		for i := range tunnels {
+			tunnels[i].HostID = host.ID
+			st.Tunnels = append(st.Tunnels, tunnels[i])
+		}
+		if err := config.Validate(st); err != nil {
+			log.Fatalf("validate imported config: %v", err)
+		}
 		if err := store.Save(st); err != nil {
 			log.Fatalf("save config: %v", err)
 		}
@@ -69,9 +143,17 @@ func main() {
 		return
 	}
 
-	settings, err := store.Load()
+	settings, err := readDaemonSettings(path)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+	if *checkConfig {
+		fmt.Printf("config valid: %d host(s), %d tunnel(s)\n", len(settings.Hosts), len(settings.Tunnels))
+		return
+	}
+	toStart, err := selectTunnels(settings, *startAll, *tunnelIDs, *autoStart)
+	if err != nil {
+		log.Fatalf("select tunnels: %v", err)
 	}
 
 	reg := stats.NewRegistry()
@@ -104,31 +186,7 @@ func main() {
 	stopStats := sup.StartStatsTicker(*statsEvery)
 	defer stopStats()
 
-	// 决定要启动的隧道集合。
-	var toStart []string
-	switch {
-	case *startAll:
-		for _, t := range settings.Tunnels {
-			toStart = append(toStart, t.ID)
-		}
-	case strings.TrimSpace(*tunnelIDs) != "":
-		for _, id := range strings.Split(*tunnelIDs, ",") {
-			toStart = append(toStart, strings.TrimSpace(id))
-		}
-	default:
-		if *autoStart {
-			for _, t := range settings.Tunnels {
-				if t.AutoStart {
-					toStart = append(toStart, t.ID)
-				}
-			}
-		}
-	}
-
-	if len(toStart) == 0 {
-		log.Print("warning: no tunnels to start (use -all, -tunnel <id>, or configure autoStart in config)")
-	}
-
+	started := 0
 	for _, id := range toStart {
 		tun, ok := settings.FindTunnel(id)
 		if !ok {
@@ -139,7 +197,11 @@ func main() {
 			log.Printf("start tunnel %s (%s): %v", id, describeTunnel(*tun), err)
 			continue
 		}
+		started++
 		log.Printf("started tunnel %s (%s)", id, describeTunnel(*tun))
+	}
+	if started == 0 {
+		log.Fatal("no tunnel could be started; check configured host references")
 	}
 
 	sig := make(chan os.Signal, 2)
@@ -157,8 +219,66 @@ func main() {
 	sup.StopAllWithTimeout(10 * time.Second)
 }
 
+// readDaemonSettings validates a complete, bounded configuration document.
+// Missing config is an operational error rather than desktop first-run setup.
+func readDaemonSettings(path string) (*config.Settings, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, config.MaxConfigBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	return config.ParseSettings(data)
+}
+
+// selectTunnels resolves the complete startup set before any side effects.
+// Explicit IDs are all-or-nothing, and duplicate IDs only start one loop.
+func selectTunnels(settings *config.Settings, all bool, requested string, auto bool) ([]string, error) {
+	ids := []string{}
+	seen := map[string]bool{}
+	add := func(id string) error {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return errors.New("empty tunnel ID in -tunnel list")
+		}
+		if _, found := settings.FindTunnel(id); !found {
+			return fmt.Errorf("tunnel %s not found", id)
+		}
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+		return nil
+	}
+	if all && strings.TrimSpace(requested) != "" {
+		return nil, errors.New("-all and -tunnel cannot be used together")
+	}
+	if strings.TrimSpace(requested) != "" {
+		for _, id := range strings.Split(requested, ",") {
+			if err := add(id); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		for _, tunnel := range settings.Tunnels {
+			if all || (auto && tunnel.AutoStart) {
+				if err := add(tunnel.ID); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil, errors.New("no tunnels to start (use -all, -tunnel <id>, or configure autoStart)")
+	}
+	return ids, nil
+}
+
 // splitShellish 极简 shell 分词：支持双引号。仅用于 --from-ssh-cmd 输入。
-func splitShellish(s string) []string {
+func splitShellish(s string) ([]string, error) {
 	var out []string
 	var cur strings.Builder
 	inQuote := false
@@ -183,17 +303,32 @@ func splitShellish(s string) []string {
 	if cur.Len() > 0 {
 		out = append(out, cur.String())
 	}
-	return out
+	if inQuote {
+		return nil, errors.New("unbalanced quote in command")
+	}
+	return out, nil
 }
 
 func describeTunnel(t config.Tunnel) string {
+	target := t.TargetSocket
+	if target == "" {
+		target = net.JoinHostPort(bindHost(t.TargetHost), strconv.Itoa(t.TargetPort))
+	}
 	switch t.Type {
 	case config.TypeLocal:
-		return fmt.Sprintf("-L %s:%d -> %s:%d", bindHost(t.LocalBindHost), t.LocalPort, t.TargetHost, t.TargetPort)
+		listener := net.JoinHostPort(bindHost(t.LocalBindHost), strconv.Itoa(t.LocalPort))
+		if t.LocalSocket != "" {
+			listener = t.LocalSocket
+		}
+		return fmt.Sprintf("-L %s -> %s", listener, target)
 	case config.TypeRemote:
-		return fmt.Sprintf("-R :%d <- %s:%d", t.RemotePort, t.TargetHost, t.TargetPort)
+		listener := net.JoinHostPort(bindHost(t.RemoteBindHost), strconv.Itoa(t.RemotePort))
+		if t.RemoteSocket != "" {
+			listener = t.RemoteSocket
+		}
+		return fmt.Sprintf("-R %s <- %s", listener, target)
 	case config.TypeDynamic:
-		return fmt.Sprintf("-D socks5://%s:%d", bindHost(t.LocalBindHost), t.SocksPort)
+		return fmt.Sprintf("-D socks5://%s", net.JoinHostPort(bindHost(t.LocalBindHost), strconv.Itoa(t.SocksPort)))
 	default:
 		return t.Type
 	}
@@ -204,4 +339,13 @@ func bindHost(h string) string {
 		return "127.0.0.1"
 	}
 	return h
+}
+
+func findHostByAddr(settings *config.Settings, host string, port int, user string) (config.Host, bool) {
+	for _, h := range settings.Hosts {
+		if h.Host == host && (h.Port == port || (port == 22 && h.Port == 0)) && h.User == user {
+			return h, true
+		}
+	}
+	return config.Host{}, false
 }

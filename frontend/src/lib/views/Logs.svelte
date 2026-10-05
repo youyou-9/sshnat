@@ -4,6 +4,7 @@
   import { t } from "@/lib/i18n";
   import Button from "@/lib/components/ui/Button.svelte";
   import Select from "@/lib/components/ui/Select.svelte";
+  import { copyText } from "@/lib/tunnel-command";
 
   let follow = $state(true);
   let copied = $state(false);
@@ -49,7 +50,7 @@
     return "dim";
   }
 
-  function copyFiltered() {
+  async function copyFiltered() {
     if (filteredLogs.length === 0) return;
     const text = filteredLogs
       .map((l) => {
@@ -57,10 +58,13 @@
         return `[${l.time}] [${tunName}] ${l.message}`;
       })
       .join("\n");
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(text);
-      copied = true;
-      setTimeout(() => (copied = false), 1500);
+    try {
+      if (await copyText(text)) {
+        copied = true;
+        setTimeout(() => (copied = false), 1500);
+      }
+    } catch (error) {
+      console.error("Copy logs failed:", error);
     }
   }
 

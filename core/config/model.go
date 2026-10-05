@@ -16,6 +16,12 @@ const (
 	AuthMethodAgent    = "agent"
 )
 
+// Host key verification policies. Empty values retain accept-new behavior.
+const (
+	HostKeyAcceptNew = "accept-new"
+	HostKeyStrict    = "strict"
+)
+
 // Host 是一台 SSH 服务器（含认证与跳板配置）。
 type Host struct {
 	ID   string `json:"id"`
@@ -30,8 +36,10 @@ type Host struct {
 	// JumpHostIDs 为跳板链，按从近到远排列。
 	JumpHostIDs []string `json:"jumpHostIds,omitempty"`
 
-	KeepaliveSeconds int `json:"keepaliveSeconds,omitempty"` // 0 = 默认 15s
-	KnownHostsFile   string `json:"knownHostsFile,omitempty"`
+	KeepaliveSeconds      int    `json:"keepaliveSeconds,omitempty"` // 0 = 默认 15s
+	KnownHostsFile        string `json:"knownHostsFile,omitempty"`
+	HostKeyPolicy         string `json:"hostKeyPolicy,omitempty"`         // accept-new | strict
+	ConnectTimeoutSeconds int    `json:"connectTimeoutSeconds,omitempty"` // 0 = 默认 15s
 }
 
 // AuthConfig 认证配置。

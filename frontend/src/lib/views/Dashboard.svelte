@@ -16,7 +16,7 @@
   import Badge from "@/lib/components/ui/Badge.svelte";
   import TunnelCard from "@/lib/components/TunnelCard.svelte";
   import NewTunnelModal from "@/lib/components/NewTunnelModal.svelte";
-  import { app, startTunnel, stopTunnel } from "@/lib/state.svelte";
+  import { app, setAllTunnelsRunning } from "@/lib/state.svelte";
   import { t } from "@/lib/i18n";
 
   let modalOpen = $state(false);
@@ -59,20 +59,28 @@
   );
 
   let batchOperating = $state(false);
+  let actionError = $state("");
+  const operating = $derived(batchOperating || Object.keys(app.tunnelBusy).length > 0);
 
   async function startAll() {
+    if (operating) return;
     batchOperating = true;
+    actionError = "";
     try {
-      await Promise.all(app.tunnels.map((t) => (!t.running ? startTunnel(t.id) : Promise.resolve())));
+      const failures = await setAllTunnelsRunning(true);
+      actionError = failures.map((failure) => `${failure.name}: ${failure.error}`).join("\n");
     } finally {
       batchOperating = false;
     }
   }
 
   async function stopAll() {
+    if (operating) return;
     batchOperating = true;
+    actionError = "";
     try {
-      await Promise.all(app.tunnels.map((t) => (t.running ? stopTunnel(t.id) : Promise.resolve())));
+      const failures = await setAllTunnelsRunning(false);
+      actionError = failures.map((failure) => `${failure.name}: ${failure.error}`).join("\n");
     } finally {
       batchOperating = false;
     }
@@ -95,10 +103,10 @@
       </p>
     </div>
     <div class="flex items-center gap-2">
-      <Button variant="ghost" size="sm" disabled={batchOperating || app.tunnels.length === 0} onclick={startAll}>
+      <Button variant="ghost" size="sm" disabled={operating || runningTunnels.length === app.tunnels.length} onclick={startAll}>
         <Play size={12} class="mr-1 text-ok" /> {t(app.language, "common.startAll")}
       </Button>
-      <Button variant="ghost" size="sm" disabled={batchOperating || runningTunnels.length === 0} onclick={stopAll}>
+      <Button variant="ghost" size="sm" disabled={operating || runningTunnels.length === 0} onclick={stopAll}>
         <Square size={12} class="mr-1 text-bad" /> {t(app.language, "common.stopAll")}
       </Button>
       <Button variant="primary" size="sm" onclick={() => (modalOpen = true)}>
@@ -107,6 +115,9 @@
       </Button>
     </div>
   </header>
+  {#if actionError}
+    <p role="alert" class="m-3 whitespace-pre-wrap rounded-chip border border-bad/40 bg-bad/10 px-3 py-2 text-xs text-bad">{actionError}</p>
+  {/if}
 
   <!-- 仪表盘主体 -->
   <div class="flex-1 space-y-5 overflow-y-auto p-5">
@@ -202,7 +213,7 @@
         <div class="flex h-36 flex-col items-center justify-center gap-2.5 rounded-card border border-dashed border-edge bg-panel/50 p-5 text-dim">
           <Radio size={24} class="opacity-40" />
           <p class="text-xs">{t(app.language, "dashboard.noRunningTunnels")} ({app.tunnels.length} {t(app.language, "dashboard.tunnels")})</p>
-          <Button variant="ghost" size="sm" onclick={startAll}>
+          <Button variant="ghost" size="sm" disabled={operating} onclick={startAll}>
             <Play size={12} class="mr-1 text-ok" /> {t(app.language, "dashboard.startAllTunnels")}
           </Button>
         </div>
