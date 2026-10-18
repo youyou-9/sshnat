@@ -2,17 +2,21 @@
 import * as TunnelService from "@/../bindings/github.com/sshnat/sshnat/app/tunnelservice";
 import * as HostService from "@/../bindings/github.com/sshnat/sshnat/app/hostservice";
 import * as SettingsService from "@/../bindings/github.com/sshnat/sshnat/app/settingsservice";
+import * as TerminalService from "@/../bindings/github.com/sshnat/sshnat/app/terminalservice";
 import type {
   AppInfo,
   CreateTunnelRequest,
   HostTestResult,
+  OpenTerminalRequest,
+  TerminalSession,
+  UpdateInfo,
   UpdateTunnelRequest,
   TunnelView,
 } from "@/../bindings/github.com/sshnat/sshnat/app/models";
 import type { Host as HostModel } from "@/../bindings/github.com/sshnat/sshnat/core/config/models";
 
-export { TunnelService, HostService, SettingsService };
-export type { AppInfo, CreateTunnelRequest, HostTestResult, UpdateTunnelRequest, TunnelView };
+export { TunnelService, HostService, SettingsService, TerminalService };
+export type { AppInfo, CreateTunnelRequest, HostTestResult, OpenTerminalRequest, TerminalSession, UpdateInfo, UpdateTunnelRequest, TunnelView };
 export type Host = HostModel;
 export type Tunnel = TunnelView; // 运行时视图即隧道条目（含状态字段）
 
@@ -21,6 +25,8 @@ export const EV = {
   tunnelStatus: "sshnat:tunnel-status",
   tunnelStats: "sshnat:tunnel-stats",
   log: "sshnat:log",
+  terminalData: "sshnat:terminal-data",
+  terminalExit: "sshnat:terminal-exit",
 } as const;
 
 export interface StatusEvent {

@@ -3,27 +3,82 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import { Create as $Create } from "@wailsio/runtime";
+
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as stats$0 from "../core/stats/models.js";
 
 /**
  * AppInfo 返回应用信息（前端关于页/调试用）。
  */
-export interface AppInfo {
+export class AppInfo {
     "name": string;
     "version": string;
     "configPath": string;
+
+    /**
+     * ServerMode 为 true 时没有原生文件对话框，前端应隐藏相关入口。
+     */
+    "serverMode": boolean;
+
+    /** Creates a new AppInfo instance. */
+    constructor($$source: Partial<AppInfo> = {}) {
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("version" in $$source)) {
+            this["version"] = "";
+        }
+        if (!("configPath" in $$source)) {
+            this["configPath"] = "";
+        }
+        if (!("serverMode" in $$source)) {
+            this["serverMode"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new AppInfo instance from a string or object.
+     */
+    static createFrom($$source: any = {}): AppInfo {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new AppInfo($$parsedSource as Partial<AppInfo>);
+    }
 }
 
-export interface ConfigImportResult {
+export class ConfigImportResult {
     "hostsAdded": number;
     "tunnelsAdded": number;
     "backupPath"?: string;
+
+    /** Creates a new ConfigImportResult instance. */
+    constructor($$source: Partial<ConfigImportResult> = {}) {
+        if (!("hostsAdded" in $$source)) {
+            this["hostsAdded"] = 0;
+        }
+        if (!("tunnelsAdded" in $$source)) {
+            this["tunnelsAdded"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ConfigImportResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ConfigImportResult {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ConfigImportResult($$parsedSource as Partial<ConfigImportResult>);
+    }
 }
 
 /**
  * CreateTunnelRequest 是 New Tunnel 弹窗的提交载荷。
  */
-export interface CreateTunnelRequest {
+export class CreateTunnelRequest {
     "name": string;
     "hostId": string;
 
@@ -42,6 +97,32 @@ export interface CreateTunnelRequest {
     "remoteSocket"?: string;
     "socksPort"?: number;
     "autoStart": boolean;
+
+    /** Creates a new CreateTunnelRequest instance. */
+    constructor($$source: Partial<CreateTunnelRequest> = {}) {
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("hostId" in $$source)) {
+            this["hostId"] = "";
+        }
+        if (!("type" in $$source)) {
+            this["type"] = "";
+        }
+        if (!("autoStart" in $$source)) {
+            this["autoStart"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CreateTunnelRequest instance from a string or object.
+     */
+    static createFrom($$source: any = {}): CreateTunnelRequest {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new CreateTunnelRequest($$parsedSource as Partial<CreateTunnelRequest>);
+    }
 }
 
 /**
@@ -50,17 +131,96 @@ export interface CreateTunnelRequest {
  * error so the UI can show a useful per-host status while keeping malformed
  * requests (for example an unknown host ID) as regular API errors.
  */
-export interface HostTestResult {
+export class HostTestResult {
     "hostId": string;
     "success": boolean;
     "durationMs": number;
     "error"?: string;
+
+    /** Creates a new HostTestResult instance. */
+    constructor($$source: Partial<HostTestResult> = {}) {
+        if (!("hostId" in $$source)) {
+            this["hostId"] = "";
+        }
+        if (!("success" in $$source)) {
+            this["success"] = false;
+        }
+        if (!("durationMs" in $$source)) {
+            this["durationMs"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new HostTestResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): HostTestResult {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new HostTestResult($$parsedSource as Partial<HostTestResult>);
+    }
+}
+
+/**
+ * OpenTerminalRequest 描述一次远程终端会话请求。
+ * SessionID 可由前端预先生成，这样输出事件不会在 Open 应答前被丢弃。
+ */
+export class OpenTerminalRequest {
+    "hostId": string;
+    "cols"?: number;
+    "rows"?: number;
+    "sessionId"?: string;
+
+    /** Creates a new OpenTerminalRequest instance. */
+    constructor($$source: Partial<OpenTerminalRequest> = {}) {
+        if (!("hostId" in $$source)) {
+            this["hostId"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new OpenTerminalRequest instance from a string or object.
+     */
+    static createFrom($$source: any = {}): OpenTerminalRequest {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new OpenTerminalRequest($$parsedSource as Partial<OpenTerminalRequest>);
+    }
+}
+
+/**
+ * TerminalSession 是打开成功的会话句柄信息。
+ */
+export class TerminalSession {
+    "sessionId": string;
+    "hostId": string;
+
+    /** Creates a new TerminalSession instance. */
+    constructor($$source: Partial<TerminalSession> = {}) {
+        if (!("sessionId" in $$source)) {
+            this["sessionId"] = "";
+        }
+        if (!("hostId" in $$source)) {
+            this["hostId"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new TerminalSession instance from a string or object.
+     */
+    static createFrom($$source: any = {}): TerminalSession {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new TerminalSession($$parsedSource as Partial<TerminalSession>);
+    }
 }
 
 /**
  * TunnelView 是隧道配置 + 运行时状态的组合视图。
  */
-export interface TunnelView {
+export class TunnelView {
     "id": string;
     "name": string;
 
@@ -117,12 +277,94 @@ export interface TunnelView {
     "running": boolean;
     "error": string;
     "stats": stats$0.Snapshot;
+
+    /** Creates a new TunnelView instance. */
+    constructor($$source: Partial<TunnelView> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("hostId" in $$source)) {
+            this["hostId"] = "";
+        }
+        if (!("type" in $$source)) {
+            this["type"] = "";
+        }
+        if (!("autoStart" in $$source)) {
+            this["autoStart"] = false;
+        }
+        if (!("status" in $$source)) {
+            this["status"] = "";
+        }
+        if (!("running" in $$source)) {
+            this["running"] = false;
+        }
+        if (!("error" in $$source)) {
+            this["error"] = "";
+        }
+        if (!("stats" in $$source)) {
+            this["stats"] = (new stats$0.Snapshot());
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new TunnelView instance from a string or object.
+     */
+    static createFrom($$source: any = {}): TunnelView {
+        const $$createField18_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("stats" in $$parsedSource) {
+            $$parsedSource["stats"] = $$createField18_0($$parsedSource["stats"]);
+        }
+        return new TunnelView($$parsedSource as Partial<TunnelView>);
+    }
+}
+
+/**
+ * UpdateInfo 是一次更新检查的结果（字段与 internal/update.Info 对齐）。
+ */
+export class UpdateInfo {
+    "current": string;
+    "latest"?: string;
+    "url"?: string;
+    "hasUpdate": boolean;
+
+    /**
+     * Reason 是结果分类（up-to-date/available/no-release/dev-build/unparsable），
+     * 前端据此本地化展示，不依赖英文文案。
+     */
+    "reason"?: string;
+    "message"?: string;
+
+    /** Creates a new UpdateInfo instance. */
+    constructor($$source: Partial<UpdateInfo> = {}) {
+        if (!("current" in $$source)) {
+            this["current"] = "";
+        }
+        if (!("hasUpdate" in $$source)) {
+            this["hasUpdate"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new UpdateInfo instance from a string or object.
+     */
+    static createFrom($$source: any = {}): UpdateInfo {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new UpdateInfo($$parsedSource as Partial<UpdateInfo>);
+    }
 }
 
 /**
  * UpdateTunnelRequest 是编辑隧道的提交载荷。
  */
-export interface UpdateTunnelRequest {
+export class UpdateTunnelRequest {
     "id": string;
     "name": string;
     "hostId": string;
@@ -142,4 +384,36 @@ export interface UpdateTunnelRequest {
     "remoteSocket"?: string;
     "socksPort"?: number;
     "autoStart": boolean;
+
+    /** Creates a new UpdateTunnelRequest instance. */
+    constructor($$source: Partial<UpdateTunnelRequest> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("hostId" in $$source)) {
+            this["hostId"] = "";
+        }
+        if (!("type" in $$source)) {
+            this["type"] = "";
+        }
+        if (!("autoStart" in $$source)) {
+            this["autoStart"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new UpdateTunnelRequest instance from a string or object.
+     */
+    static createFrom($$source: any = {}): UpdateTunnelRequest {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new UpdateTunnelRequest($$parsedSource as Partial<UpdateTunnelRequest>);
+    }
 }
+
+// Private type creation functions
+const $$createType0 = stats$0.Snapshot.createFrom;

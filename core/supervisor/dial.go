@@ -11,6 +11,13 @@ import (
 	"github.com/sshnat/sshnat/core/ssh"
 )
 
+// BuildDialOptions exposes the supervised host-to-dial conversion for other
+// subsystems (for example the remote terminal) so they follow exactly the
+// same ProxyJump/authentication/host-key path as tunnels.
+func BuildDialOptions(store *config.Store, host config.Host) (ssh.DialOptions, error) {
+	return buildDialOptions(store, host)
+}
+
 // buildDialOptions 把 config.Host（含跳板链）转换为 core/ssh 的拨号参数。
 // 跳板链按 ID 递归展开，带环检测。
 func buildDialOptions(store *config.Store, host config.Host) (ssh.DialOptions, error) {

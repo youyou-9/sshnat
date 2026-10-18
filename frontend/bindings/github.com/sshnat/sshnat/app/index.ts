@@ -3,18 +3,23 @@
 
 import * as HostService from "./hostservice.js";
 import * as SettingsService from "./settingsservice.js";
+import * as TerminalService from "./terminalservice.js";
 import * as TunnelService from "./tunnelservice.js";
 export {
     HostService,
     SettingsService,
+    TerminalService,
     TunnelService
 };
 
-export type {
+export {
     AppInfo,
     ConfigImportResult,
     CreateTunnelRequest,
     HostTestResult,
+    OpenTerminalRequest,
+    TerminalSession,
     TunnelView,
+    UpdateInfo,
     UpdateTunnelRequest
 } from "./models.js";

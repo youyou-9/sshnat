@@ -16,6 +16,7 @@ import (
 	"github.com/sshnat/sshnat/core/config"
 	"github.com/sshnat/sshnat/core/stats"
 	"github.com/sshnat/sshnat/core/supervisor"
+	"github.com/sshnat/sshnat/core/terminal"
 	"github.com/sshnat/sshnat/internal/version"
 )
 
@@ -25,6 +26,8 @@ const (
 	EventTunnelStats   = "sshnat:tunnel-stats"
 	EventLog           = "sshnat:log"
 	EventConfigChanged = "sshnat:config-changed"
+	EventTerminalData  = "sshnat:terminal-data"
+	EventTerminalExit  = "sshnat:terminal-exit"
 )
 
 // Emitter 由 main 装配：把 core 事件转发到前端。
@@ -89,14 +92,31 @@ type Services struct {
 	Store *config.Store
 	Sup   *supervisor.Supervisor
 	Stats *stats.Registry
+	Term  *terminal.Manager
 
 	// Emit 在 main 中装配。
 	emit         Emitter
 	emu          sync.RWMutex
 	chooseExport func() (string, error)
+	chooseFile   func() (string, error)
+	serverMode   bool
 
 	tmu     sync.Mutex // 保护配置文件读写串行化
 	closing bool       // also protected by tmu; shutdown rejects queued starts
+}
+
+// SetServerMode 标记当前是否为无原生窗口的 server 构建。
+func (s *Services) SetServerMode(enabled bool) {
+	s.emu.Lock()
+	defer s.emu.Unlock()
+	s.serverMode = enabled
+}
+
+// ServerMode 返回是否为 server 构建（前端据此隐藏原生对话框入口）。
+func (s *Services) ServerMode() bool {
+	s.emu.RLock()
+	defer s.emu.RUnlock()
+	return s.serverMode
 }
 
 // TunnelService 暴露隧道 CRUD 与启停。
@@ -121,9 +141,32 @@ const hostTestTimeout = 15 * time.Second
 // SettingsService 暴露应用级设置。
 type SettingsService struct{ s *Services }
 
+// TerminalService 暴露远程终端会话管理。
+type TerminalService struct{ s *Services }
+
 // NewServices 创建并装配服务，同时启动 core 事件 → 前端事件的转发。
 func NewServices(store *config.Store, sup *supervisor.Supervisor, reg *stats.Registry) *Services {
 	s := &Services{Store: store, Sup: sup, Stats: reg}
+
+	// 终端会话输出/退出经事件总线推到前端。
+	s.Term = terminal.NewManager(
+		func(sessionID string, data []byte) {
+			s.emu.RLock()
+			emitter := s.emit
+			s.emu.RUnlock()
+			if emitter != nil {
+				emitter(EventTerminalData, map[string]any{"sessionId": sessionID, "data": string(data)})
+			}
+		},
+		func(sessionID string, exitErr string) {
+			s.emu.RLock()
+			emitter := s.emit
+			s.emu.RUnlock()
+			if emitter != nil {
+				emitter(EventTerminalExit, map[string]any{"sessionId": sessionID, "error": exitErr})
+			}
+		},
+	)
 
 	// 转发 supervisor 事件到前端。
 	go func() {
@@ -172,6 +215,7 @@ func NewServices(store *config.Store, sup *supervisor.Supervisor, reg *stats.Reg
 func (s *Services) tunnel() *TunnelService     { return &TunnelService{s} }
 func (s *Services) host() *HostService         { return &HostService{s} }
 func (s *Services) settings() *SettingsService { return &SettingsService{s} }
+func (s *Services) terminal() *TerminalService { return &TerminalService{s} }
 
 // ---------- TunnelService ----------
 
@@ -807,6 +851,8 @@ type AppInfo struct {
 	Name       string `json:"name"`
 	Version    string `json:"version"`
 	ConfigPath string `json:"configPath"`
+	// ServerMode 为 true 时没有原生文件对话框，前端应隐藏相关入口。
+	ServerMode bool `json:"serverMode"`
 }
 
 // Get 返回应用信息。
@@ -815,6 +861,7 @@ func (st *SettingsService) Get() (*AppInfo, error) {
 		Name:       version.Name,
 		Version:    version.Current(),
 		ConfigPath: st.s.Store.Path(),
+		ServerMode: st.s.ServerMode(),
 	}, nil
 }
 
@@ -832,7 +879,15 @@ func (s *Services) SetExportChooser(choose func() (string, error)) {
 	s.chooseExport = choose
 }
 
+// SetFileChooser connects the native open dialog (private keys, known_hosts…).
+func (s *Services) SetFileChooser(choose func() (string, error)) {
+	s.emu.Lock()
+	defer s.emu.Unlock()
+	s.chooseFile = choose
+}
+
 // 公开构造，供 main 传递给 Wails 绑定。
 func (s *Services) TunnelService() *TunnelService     { return s.tunnel() }
 func (s *Services) HostService() *HostService         { return s.host() }
 func (s *Services) SettingsService() *SettingsService { return s.settings() }
+func (s *Services) TerminalService() *TerminalService { return s.terminal() }

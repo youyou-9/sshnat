@@ -23,7 +23,14 @@
   const flat = $derived(data.length < 2);
 </script>
 
-<svg {width} {height} viewBox={`0 0 ${width} ${height}`} class="overflow-visible">
+<!-- 自适应宽度：viewBox 固定、整体拉伸填满容器，避免窄条悬浮 -->
+<svg
+  width="100%"
+  {height}
+  viewBox={`0 0 ${width} ${height}`}
+  preserveAspectRatio="none"
+  class="block w-full overflow-visible"
+>
   {#if flat}
     <line x1="0" y1={height - 1} x2={width} y2={height - 1} stroke="{color}" stroke-opacity="0.35" stroke-width="1" />
   {:else}

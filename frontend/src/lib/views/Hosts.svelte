@@ -1,13 +1,16 @@
 <script lang="ts">
-  import { ArrowDown, ArrowUp, Check, LoaderCircle, Plus, Server, Pencil, X } from "@lucide/svelte";
+  import { ArrowDown, ArrowUp, Check, LoaderCircle, Plus, Server, Pencil, SquareTerminal, X } from "@lucide/svelte";
   import Badge from "@/lib/components/ui/Badge.svelte";
   import Button from "@/lib/components/ui/Button.svelte";
   import Input from "@/lib/components/ui/Input.svelte";
   import Label from "@/lib/components/ui/Label.svelte";
+  import PathInput from "@/lib/components/ui/PathInput.svelte";
   import Select from "@/lib/components/ui/Select.svelte";
+  import Dialog from "@/lib/components/ui/Dialog.svelte";
+  import ConfirmDialog from "@/lib/components/ui/ConfirmDialog.svelte";
   import { HostService, type Host, type HostTestResult } from "@/lib/api";
-  import { app, refreshHosts, refreshTunnels } from "@/lib/state.svelte";
-  import { t } from "@/lib/i18n";
+  import { app, refreshHosts, refreshTunnels, pushToast, openTerminal, dropTerminalTabsForHost } from "@/lib/state.svelte";
+  import { t, tn } from "@/lib/i18n";
 
   let showForm = $state(false);
   let error = $state("");
@@ -16,6 +19,8 @@
   let deletingId = $state("");
   let testingId = $state("");
   let testResults = $state<Record<string, HostTestResult>>({});
+  let deletingHost = $state<Host | null>(null);
+  let deleteConfirmOpen = $state(false);
 
   // 表单字段
   let fName = $state("");
@@ -153,6 +158,7 @@
       await HostService.Save(host);
       cancelForm();
       await refreshHosts();
+      pushToast("success", `${host.name}: ${t(app.language, "toast.hostSaved")}`);
     } catch (e: any) {
       error = typeof e === "string" ? e : (e?.message ?? String(e));
     } finally {
@@ -160,17 +166,24 @@
     }
   }
 
-  async function removeHost(id: string) {
+  function askDelete(h: Host) {
     if (deletingId) return;
-    if (typeof window !== "undefined" && !window.confirm(t(app.language, "hosts.deleteConfirm"))) {
-      return;
-    }
-    deletingId = id;
+    deletingHost = h;
+    deleteConfirmOpen = true;
+  }
+
+  async function removeHost() {
+    const h = deletingHost;
+    if (!h || deletingId) return;
+    deletingId = h.id;
     try {
-      await HostService.Delete(id);
+      await HostService.Delete(h.id);
+      dropTerminalTabsForHost(h.id);
       await Promise.all([refreshHosts(), refreshTunnels()]);
+      pushToast("success", `${h.name}: ${t(app.language, "toast.hostDeleted")}`);
     } catch (e: any) {
       error = typeof e === "string" ? e : (e?.message ?? String(e));
+      pushToast("error", `${h.name}: ${error}`);
     } finally {
       deletingId = "";
     }
@@ -201,8 +214,8 @@
 <div class="flex h-full flex-col">
   <header class="flex h-14 shrink-0 items-center justify-between border-b border-edge px-5">
     <div>
-      <h1 class="text-[15px] font-semibold text-ink">{t(app.language, "hosts.title")}</h1>
-      <p class="text-xs text-dim">{app.hosts.length} {t(app.language, "hosts.count")}</p>
+      <h1 class="text-title font-semibold tracking-[-0.01em] text-ink">{t(app.language, "hosts.title")}</h1>
+      <p class="text-xs text-dim">{tn(app.language, app.hosts.length, "unit.hostOne", "unit.hostMany")}</p>
     </div>
     <Button variant="primary" onclick={() => (showForm ? cancelForm() : startAddHost())}>
       <Plus size={14} class="mr-1" />
@@ -211,9 +224,12 @@
   </header>
 
   <div class="flex-1 space-y-4 overflow-y-auto p-5">
-    {#if showForm}
+    <Dialog
+      bind:open={showForm}
+      title={editingId ? t(app.language, "hosts.edit") : t(app.language, "hosts.add")}
+    >
       <form
-        class="space-y-3 rounded-card border border-edge bg-panel p-4"
+        class="space-y-3"
         onsubmit={(e) => {
           e.preventDefault();
           save();
@@ -246,9 +262,9 @@
               <Input id="h-password" type="password" bind:value={fPassword} />
             </div>
           {:else if fAuth === "key"}
-            <div class="space-y-1.5">
+            <div class="space-y-1.5 col-span-2">
               <Label for="h-keypath">{t(app.language, "host.keyPath")}</Label>
-              <Input id="h-keypath" placeholder="~/.ssh/id_ed25519" bind:value={fKeyPath} class="font-mono" />
+              <PathInput id="h-keypath" placeholder="~/.ssh/id_ed25519" bind:value={fKeyPath} />
             </div>
             <div class="space-y-1.5">
               <Label for="h-passphrase">{t(app.language, "host.passphrase")}</Label>
@@ -284,7 +300,7 @@
               </div>
               <div class="space-y-1.5">
                 <Label for="h-knownhosts">{t(app.language, "host.knownHosts")}</Label>
-                <Input id="h-knownhosts" placeholder="~/.ssh/known_hosts" bind:value={fKnownHostsFile} class="font-mono" />
+                <PathInput id="h-knownhosts" placeholder="~/.ssh/known_hosts" bind:value={fKnownHostsFile} />
                 <p class="text-[11px] leading-4 text-dim">{t(app.language, "host.knownHostsHint")}</p>
               </div>
             </div>
@@ -322,20 +338,29 @@
           </Button>
         </div>
       </form>
-    {/if}
+    </Dialog>
 
     {#if app.hosts.length === 0 && !showForm}
-      <div class="flex h-full flex-col items-center justify-center gap-3 text-dim">
-        <Server size={32} class="opacity-40" />
-        <p class="text-sm">{t(app.language, "hosts.empty")}</p>
+      <div class="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center text-dim">
+        <div class="flex size-12 items-center justify-center rounded-card bg-panel ring-1 ring-edge">
+          <Server size={22} strokeWidth={1.5} class="text-dim-2" />
+        </div>
+        <p class="max-w-sm text-meta">{t(app.language, "hosts.empty")}</p>
+        <Button variant="primary" size="sm" onclick={startAddHost}><Plus size={13} class="mr-1" />{t(app.language, "hosts.add")}</Button>
       </div>
     {:else}
-      <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div class="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
         {#each app.hosts as h (h.id)}
+          {@const probe = testResults[h.id]}
           <div class="rounded-card border border-edge bg-panel p-4">
             <div class="flex items-start justify-between">
               <div>
                 <div class="flex items-center gap-2">
+                  <!-- 连通性状态点：最近一次测试成功=绿，失败=红，未测=灰 -->
+                  <span
+                    class="size-2 shrink-0 rounded-full {probe ? (probe.success ? 'bg-ok' : 'bg-bad') : 'bg-dim/40'}"
+                    title={probe ? (probe.success ? t(app.language, "hosts.testSuccess") : t(app.language, "hosts.testFailed")) : t(app.language, "hosts.test")}
+                  ></span>
                   <span class="text-sm font-medium text-ink">{h.name}</span>
                   <Badge tone="dim">{h.auth.method}</Badge>
                   {#if h.hostKeyPolicy === "strict"}<Badge tone="dim">{t(app.language, "host.keyStrict")}</Badge>{/if}
@@ -344,7 +369,7 @@
                   {h.user}@{h.host}:{h.port}
                 </div>
                 {#if h.jumpHostIds?.length}
-                  <div class="mt-0.5 text-[11px] text-dim/70">
+                  <div class="mt-0.5 text-[11px] text-dim-2">
                     {t(app.language, "hosts.jumpHosts")} ×{h.jumpHostIds.length}
                   </div>
                 {/if}
@@ -365,12 +390,12 @@
                     {t(app.language, "hosts.test")}
                   {/if}
                 </Button>
+                <Button variant="ghost" size="icon" aria-label={t(app.language, "terminal.open")} title={t(app.language, "terminal.open")} onclick={() => openTerminal(h)}><SquareTerminal size={14} /></Button>
                 <Button variant="ghost" size="icon" aria-label={t(app.language, "hosts.edit")} title={t(app.language, "hosts.edit")} onclick={() => editHost(h)}><Pencil size={14} /></Button>
-                <Button variant="danger" size="sm" disabled={deletingId === h.id} onclick={() => removeHost(h.id)}>{t(app.language, "hosts.delete")}</Button>
+                <Button variant="danger" size="sm" disabled={deletingId === h.id} onclick={() => askDelete(h)}>{t(app.language, "hosts.delete")}</Button>
               </div>
             </div>
-            {#if testResults[h.id]}
-              {@const probe = testResults[h.id]}
+            {#if probe}
               <div class={`mt-3 flex items-center gap-1.5 rounded-chip border px-2.5 py-2 text-xs ${probe.success ? "border-ok/40 bg-ok/10 text-ok" : "border-bad/40 bg-bad/10 text-bad"}`} role="status">
                 {#if probe.success}
                   <Check size={13} />
@@ -391,3 +416,13 @@
     {/if}
   </div>
 </div>
+
+{#if deletingHost}
+  <ConfirmDialog
+    bind:open={deleteConfirmOpen}
+    title={t(app.language, "hosts.delete")}
+    message={`${deletingHost.name}: ${t(app.language, "hosts.deleteConfirm")}`}
+    confirmLabel={t(app.language, "hosts.delete")}
+    onConfirm={removeHost}
+  />
+{/if}

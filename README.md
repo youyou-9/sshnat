@@ -2,6 +2,8 @@
 
 <div align="center">
 
+<img src="build/appicon.png" width="112" alt="SSHNat logo" />
+
 **A Modern Lightweight SSH Port Forwarding Desktop Client & Headless Daemon**  
 *现代轻量级 SSH 端口转发客户端与无头后台守护进程*
 
@@ -10,6 +12,7 @@
 [![Wails Version](https://img.shields.io/badge/Wails-v3.0.0--beta.11-DF0000?logo=wails)]()
 [![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-v1.1.0-2dd4bf)](https://github.com/youyou-9/sshnat/releases)
 
 [🇬🇧 English Documentation](README.md) · [🇨🇳 简体中文](README_zh.md)
 
@@ -39,6 +42,8 @@
 ---
 
 ### ✨ Key Features
+- **Remote Terminal & Workbench**: tabbed PTY terminal dock with adjustable font family/size (Ctrl+wheel or Ctrl+plus/minus to zoom), a merged workbench (KPI strip + tunnel management), and a Ctrl/Cmd+K command palette.
+- **Launch at Login & Update Checks**: native autostart on Windows, macOS, and Linux plus SemVer-aware update checks against GitHub Releases.
 - **All-in-One Port Forwarding**:
   - **Local Forwarding (`-L`)**: Expose remote internal services or server-local services locally over SSH (supports both TCP and Unix domain sockets).
   - **Remote Forwarding (`-R`)**: Listen on the remote SSH server and forward incoming connections back to local endpoints.

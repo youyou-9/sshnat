@@ -60,6 +60,7 @@ func main() {
 			application.NewService(services.TunnelService()),
 			application.NewService(services.HostService()),
 			application.NewService(services.SettingsService()),
+			application.NewService(services.TerminalService()),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -90,14 +91,19 @@ func main() {
 	}
 
 	buildTrayMenu := func() *application.Menu {
+		cur, _ := store.Load()
+		lang := "zh"
+		if cur != nil && cur.Language == "en" {
+			lang = "en"
+		}
+
 		menu := application.NewMenu()
-		menu.Add("显示 SSHNat").OnClick(func(*application.Context) {
+		menu.Add(trayBI(lang, "显示 SSHNat", "Show SSHNat")).OnClick(func(*application.Context) {
 			window.Show().Focus()
 		})
 		menu.AddSeparator()
 
-		cur, err := store.Load()
-		if err == nil && len(cur.Tunnels) > 0 {
+		if cur != nil && len(cur.Tunnels) > 0 {
 			lastUsedMu.RLock()
 			type tunWithUsage struct {
 				tun  config.Tunnel
@@ -125,7 +131,7 @@ func main() {
 				t := tList[i].tun
 				st := sup.Status(t.ID)
 				isRunning := sup.HasActiveRun(t.ID)
-				label := trayTunnelLabel(t, st)
+				label := trayTunnelLabel(t, st, lang)
 				chk := menu.AddCheckbox(label, isRunning)
 				tunID := t.ID
 				chk.OnClick(func(*application.Context) {
@@ -133,21 +139,21 @@ func main() {
 					go func() {
 						if err := toggleTrayTunnel(tunID, sup.HasActiveRun, services.TunnelService().Start, services.TunnelService().Stop); err != nil {
 							log.Printf("tray toggle tunnel %s: %v", tunID, err)
-							sup.EmitLog(tunID, fmt.Sprintf("托盘操作失败: %v", err))
+							sup.EmitLog(tunID, fmt.Sprintf("Tray tunnel toggle failed: %v", err))
 						}
 					}()
 				})
 			}
 
 			if showMore {
-				menu.Add(fmt.Sprintf("更多隧道 (%d条) 请在主界面查看...", len(cur.Tunnels)-maxTrayTunnels)).OnClick(func(*application.Context) {
+				menu.Add(fmt.Sprintf(trayBI(lang, "更多隧道 (%d条) 请在主界面查看...", "+%d more tunnels — open the main window..."), len(cur.Tunnels)-maxTrayTunnels)).OnClick(func(*application.Context) {
 					window.Show().Focus()
 				})
 			}
 			menu.AddSeparator()
 		}
 
-		menu.Add("全部启动").OnClick(func(*application.Context) {
+		menu.Add(trayBI(lang, "全部启动", "Start All")).OnClick(func(*application.Context) {
 			cur, err := store.Load()
 			if err == nil {
 				for _, t := range cur.Tunnels {
@@ -156,17 +162,17 @@ func main() {
 				}
 			}
 		})
-		menu.Add("全部停止").OnClick(func(*application.Context) {
+		menu.Add(trayBI(lang, "全部停止", "Stop All")).OnClick(func(*application.Context) {
 			sup.StopAll()
 		})
 		menu.AddSeparator()
-		menu.Add("打开配置目录").OnClick(func(*application.Context) {
+		menu.Add(trayBI(lang, "打开配置目录", "Open Config Folder")).OnClick(func(*application.Context) {
 			if err := openConfigDir(filepath.Dir(cfgPath)); err != nil {
 				log.Printf("open config directory: %v", err)
 			}
 		})
 		menu.AddSeparator()
-		menu.Add("退出").OnClick(func(*application.Context) {
+		menu.Add(trayBI(lang, "退出", "Quit")).OnClick(func(*application.Context) {
 			wailsApp.Quit()
 		})
 		return menu
@@ -181,13 +187,17 @@ func main() {
 
 			cur, err := store.Load()
 			if err == nil {
+				lang := "zh"
+				if cur.Language == "en" {
+					lang = "en"
+				}
 				runningCount := 0
 				for _, t := range cur.Tunnels {
 					if sup.HasActiveRun(t.ID) {
 						runningCount++
 					}
 				}
-				tray.SetTooltip(fmt.Sprintf("SSHNat (%d/%d 运行中)", runningCount, len(cur.Tunnels)))
+				tray.SetTooltip(fmt.Sprintf(trayBI(lang, "SSHNat (%d/%d 运行中)", "SSHNat (%d/%d running)"), runningCount, len(cur.Tunnels)))
 			}
 		})
 	}
@@ -209,11 +219,20 @@ func main() {
 		BackgroundColour: application.NewRGB(0x0D, 0x11, 0x17),
 		URL:              "/",
 	})
-	services.SetExportChooser(func() (string, error) {
-		path, err := wailsApp.Dialog.SaveFile().SetFilename("sshnat-backup.json").
-			AddFilter("JSON configuration", "*.json").AttachToWindow(window).PromptForSingleSelection()
-		return normalizeNativeSaveResult(path, err)
-	})
+	// server 构建没有原生文件对话框，与其注册后运行时失败，不如不注册，
+	// 让 SettingsService 直接返回明确的“不可用”错误；前端据 ServerMode 隐藏入口。
+	services.SetServerMode(serverMode)
+	if !serverMode {
+		services.SetExportChooser(func() (string, error) {
+			path, err := wailsApp.Dialog.SaveFile().SetFilename("sshnat-backup.json").
+				AddFilter("JSON configuration", "*.json").AttachToWindow(window).PromptForSingleSelection()
+			return normalizeNativeSaveResult(path, err)
+		})
+		services.SetFileChooser(func() (string, error) {
+			path, err := wailsApp.Dialog.OpenFile().AttachToWindow(window).PromptForSingleSelection()
+			return normalizeNativeSaveResult(path, err)
+		})
+	}
 
 	// Closing the window hides it instead of destroying the Wails application.
 	// The tray Quit action is the explicit path that stops tunnels and exits.

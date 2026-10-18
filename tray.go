@@ -7,19 +7,27 @@ import (
 	"github.com/sshnat/sshnat/core/supervisor"
 )
 
-func trayTunnelLabel(tunnel config.Tunnel, status supervisor.Status) string {
-	statusText := "已停止"
+// trayBI 按界面语言选择托盘文案；lang 只取 "zh" | "en"，缺省中文。
+func trayBI(lang, zh, en string) string {
+	if lang == "en" {
+		return en
+	}
+	return zh
+}
+
+func trayTunnelLabel(tunnel config.Tunnel, status supervisor.Status, lang string) string {
+	statusText := trayBI(lang, "已停止", "Stopped")
 	switch status {
 	case supervisor.StatusStarting:
-		statusText = "正在连接"
+		statusText = trayBI(lang, "正在连接", "Connecting")
 	case supervisor.StatusConnected:
-		statusText = "运行中"
+		statusText = trayBI(lang, "运行中", "Running")
 	case supervisor.StatusReconnecting:
-		statusText = "重连中"
+		statusText = trayBI(lang, "重连中", "Reconnecting")
 	case supervisor.StatusStopping:
-		statusText = "停止中"
+		statusText = trayBI(lang, "停止中", "Stopping")
 	case supervisor.StatusError:
-		statusText = "错误"
+		statusText = trayBI(lang, "错误", "Error")
 	}
 	endpoint := fmt.Sprint(tunnel.LocalPort)
 	if tunnel.LocalSocket != "" {

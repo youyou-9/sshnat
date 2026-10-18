@@ -5,6 +5,7 @@
   import Button from "@/lib/components/ui/Button.svelte";
   import Input from "@/lib/components/ui/Input.svelte";
   import Label from "@/lib/components/ui/Label.svelte";
+  import PathInput from "@/lib/components/ui/PathInput.svelte";
   import Select from "@/lib/components/ui/Select.svelte";
   import Switch from "@/lib/components/ui/Switch.svelte";
   import Badge from "@/lib/components/ui/Badge.svelte";
@@ -273,13 +274,14 @@
             },
             keepaliveSeconds: 15,
           };
+          // 记录保存前的 host id 快照，保存后取“新增的那一条”。
+          // 若按 name+host+user 反查，已存在同名主机时会误绑旧主机、丢掉刚输入的凭据。
+          const knownHostIds = new Set(app.hosts.map((h) => h.id));
           await HostService.Save(newHost as any);
           await refreshHosts();
-          const created = app.hosts.find(
-            (h) => h.name === newHost.name && h.host === newHost.host && h.user === newHost.user
-          ) ?? app.hosts[app.hosts.length - 1];
+          const created = app.hosts.find((h) => !knownHostIds.has(h.id));
           if (!created) {
-            throw new Error("Failed to create SSH host");
+            throw new Error(t(app.language, "tunnel.hostCreateFailed"));
           }
           finalHostId = created.id;
         } else if (showEditAuth) {
@@ -320,13 +322,28 @@
   description={isEditing ? "" : t(app.language, "tunnel.newDescription")}
 >
   <div class="space-y-4">
-    {#if !useCmdMode}
-      {#if !isEditing}
-        <button class="flex items-center gap-1.5 text-xs text-dim transition-colors hover:text-accent" onclick={() => (useCmdMode = true)}>
-          <Terminal size={12} /> {t(app.language, "tunnel.import")}
+    <!-- 创建方式切换：表单 / 粘贴 ssh 命令（编辑模式锁定为表单） -->
+    {#if !isEditing}
+      <div class="grid grid-cols-2 gap-1 rounded-chip bg-base p-1" role="tablist">
+        <button
+          role="tab"
+          aria-selected={!useCmdMode}
+          class="flex items-center justify-center gap-1.5 rounded-chip px-3 py-1.5 text-xs font-medium transition-colors {!useCmdMode ? 'bg-panel text-accent shadow-sm' : 'text-dim hover:text-ink'}"
+          onclick={() => (useCmdMode = false)}
+        >
+          <Server size={12} /> {t(app.language, "tunnel.modeForm")}
         </button>
-      {/if}
-
+        <button
+          role="tab"
+          aria-selected={useCmdMode}
+          class="flex items-center justify-center gap-1.5 rounded-chip px-3 py-1.5 text-xs font-medium transition-colors {useCmdMode ? 'bg-panel text-accent shadow-sm' : 'text-dim hover:text-ink'}"
+          onclick={() => (useCmdMode = true)}
+        >
+          <Terminal size={12} /> {t(app.language, "tunnel.modeCommand")}
+        </button>
+      </div>
+    {/if}
+    {#if !useCmdMode}
       <!-- 隧道基础信息与主机选择 -->
       <div class="grid grid-cols-2 gap-3">
         <div class="space-y-1.5">
@@ -341,7 +358,7 @@
 
       <!-- 新建主机内嵌卡片 -->
       {#if isCreatingNewHost}
-        <div class="rounded-card border border-accent/30 bg-accent/5 p-3.5 space-y-3">
+        <div class="rounded-card bg-accent/5 p-3 space-y-3">
           <div class="flex items-center gap-1.5 text-xs font-medium text-accent">
             <Server size={13} />
             <span>{t(app.language, "tunnel.configureHost")}</span>
@@ -373,9 +390,9 @@
                 <Input id="nh-pwd" type="password" placeholder="SSH Password" bind:value={hPassword} class="h-7 text-xs" />
               </div>
             {:else if hAuth === "key"}
-              <div class="space-y-1">
+              <div class="space-y-1 col-span-2">
                 <Label for="nh-kpath" class="text-[11px]">{t(app.language, "host.keyPath")}</Label>
-                <Input id="nh-kpath" placeholder="~/.ssh/id_rsa" bind:value={hKeyPath} class="h-7 font-mono text-xs" />
+                <PathInput id="nh-kpath" placeholder="~/.ssh/id_rsa" bind:value={hKeyPath} />
               </div>
               <div class="space-y-1">
                 <Label for="nh-kpass" class="text-[11px]">{t(app.language, "host.passphrase")}</Label>
@@ -391,7 +408,7 @@
         </div>
       {:else}
         <!-- 已选主机认证凭据快捷查看/修改 -->
-        <div class="rounded-chip border border-edge bg-base/60 px-3 py-2 text-xs">
+        <div class="rounded-chip bg-base/70 px-3 py-2 text-xs">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
               <KeyRound size={13} class="text-dim" />
@@ -419,9 +436,9 @@
                   <Input id="eh-pwd" type="password" placeholder="SSH Password" bind:value={hPassword} class="h-7 text-xs" />
                 </div>
               {:else if hAuth === "key"}
-                <div class="space-y-1">
+                <div class="space-y-1 col-span-2">
                   <Label for="eh-kpath" class="text-[11px]">{t(app.language, "host.keyPath")}</Label>
-                  <Input id="eh-kpath" placeholder="~/.ssh/id_rsa" bind:value={hKeyPath} class="h-7 font-mono text-xs" />
+                  <PathInput id="eh-kpath" placeholder="~/.ssh/id_rsa" bind:value={hKeyPath} />
                 </div>
                 <div class="space-y-1">
                   <Label for="eh-kpass" class="text-[11px]">{t(app.language, "host.passphrase")}</Label>
@@ -441,17 +458,18 @@
       <div class="space-y-1.5">
         <Label for="t-type">{t(app.language, "tunnel.type")}</Label>
         <Select id="t-type" bind:value={type} options={typeOptions} />
-        <p class="text-[11px] text-dim/70">
+        <p class="text-[11px] text-dim-2">
           {#if type === "L"}{t(app.language, "tunnel.localHint")}
           {:else if type === "R"}{t(app.language, "tunnel.remoteHint")}
           {:else}{t(app.language, "tunnel.dynamicHint")}{/if}
         </p>
       </div>
 
-      <fieldset class="rounded-chip border border-edge p-3">
-        <legend class="px-1 font-mono text-[11px] text-accent">-{type}</legend>
+      <div class="rounded-chip bg-base/40 p-3">
         {#if type === "L"}
           <div class="space-y-3">
+            <!-- 第一组：本机监听（用户先决定“从哪连进来”） -->
+            <p class="text-2xs font-semibold uppercase tracking-wider text-dim-2">{t(app.language, "tunnel.sectionListener")}</p>
             <div class="grid grid-cols-2 gap-3">
               <div class="space-y-1.5">
                 <Label for="t-lbindhost">{t(app.language, "tunnel.localBindHost")}</Label>
@@ -461,53 +479,66 @@
                 <Label for="t-lport">{t(app.language, "tunnel.localPort")}</Label>
                 <Input id="t-lport" placeholder="8080" bind:value={localPort} disabled={!!localSocket.trim()} class="font-mono" inputmode="numeric" />
               </div>
+            </div>
+
+            <!-- 第二组：目标服务（经 SSH 服务器访问的真实地址） -->
+            <p class="border-t border-edge/60 pt-3 text-2xs font-semibold uppercase tracking-wider text-dim-2">{t(app.language, "tunnel.sectionTarget")}</p>
+            <div class="grid grid-cols-2 gap-3">
+              <div class="col-span-2 space-y-1.5">
+                <div class="flex flex-wrap items-center justify-between gap-1.5">
+                  <Label for="t-thost">{t(app.language, "tunnel.targetHost")}</Label>
+                  <div class="flex items-center gap-1.5">
+                    <span class="text-2xs text-dim-2">{t(app.language, "tunnel.commonPreset")}</span>
+                    <button
+                      type="button"
+                      class={`rounded-chip px-1.5 py-0.5 font-mono text-2xs transition-colors ${
+                        targetHost === "127.0.0.1" ? "bg-accent/15 text-accent" : "bg-base text-dim hover:text-ink"
+                      }`}
+                      onclick={() => (targetHost = "127.0.0.1")}
+                    >
+                      127.0.0.1 ({t(app.language, "tunnel.localService")})
+                    </button>
+                    {#if activeHostAddr && activeHostAddr !== "127.0.0.1"}
+                      <button
+                        type="button"
+                        class={`max-w-[130px] truncate rounded-chip px-1.5 py-0.5 font-mono text-2xs transition-colors ${
+                          targetHost === activeHostAddr ? "bg-accent/15 text-accent" : "bg-base text-dim hover:text-ink"
+                        }`}
+                        title={activeHostAddr}
+                        onclick={() => (targetHost = activeHostAddr)}
+                      >
+                        {activeHostAddr}
+                      </button>
+                    {/if}
+                  </div>
+                </div>
+                <Input id="t-thost" placeholder="127.0.0.1" bind:value={targetHost} disabled={!!targetSocket.trim()} class="font-mono" />
+              </div>
               <div class="space-y-1.5">
                 <Label for="t-tport">{t(app.language, "tunnel.targetPort")}</Label>
                 <Input id="t-tport" placeholder="3306" bind:value={targetPort} disabled={!!targetSocket.trim()} class="font-mono" inputmode="numeric" />
               </div>
             </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div class="space-y-1.5">
-                <Label for="t-lsocket">{t(app.language, "tunnel.localSocket")}</Label>
-                <Input id="t-lsocket" placeholder="/tmp/sshnat.sock" bind:value={localSocket} class="font-mono" />
-              </div>
-              <div class="space-y-1.5">
-                <Label for="t-tsocket">{t(app.language, "tunnel.targetSocket")}</Label>
-                <Input id="t-tsocket" placeholder="/run/service.sock" bind:value={targetSocket} class="font-mono" />
-              </div>
-            </div>
-            <p class="text-[11px] text-dim/70">{t(app.language, "tunnel.socketHint")}</p>
 
-            <div class="space-y-1.5">
-              <div class="flex items-center justify-between">
-                <Label for="t-thost">{t(app.language, "tunnel.targetHost")}</Label>
-                <div class="flex items-center gap-1.5">
-                  <span class="text-[10px] text-dim">{t(app.language, "tunnel.commonPreset")}</span>
-                  <button
-                    type="button"
-                    class={`px-2 py-0.5 text-[10px] rounded font-mono transition-colors border ${
-                      targetHost === "127.0.0.1" ? "bg-accent/20 text-accent font-semibold border-accent/40" : "bg-base text-dim hover:text-ink border-edge"
-                    }`}
-                    onclick={() => (targetHost = "127.0.0.1")}
-                  >
-                    127.0.0.1 ({t(app.language, "tunnel.localService")})
-                  </button>
-                  {#if activeHostAddr && activeHostAddr !== "127.0.0.1"}
-                    <button
-                      type="button"
-                      class={`px-2 py-0.5 text-[10px] rounded font-mono transition-colors border max-w-[130px] truncate ${
-                        targetHost === activeHostAddr ? "bg-accent/20 text-accent font-semibold border-accent/40" : "bg-base text-dim hover:text-ink border-edge"
-                      }`}
-                      title={activeHostAddr}
-                      onclick={() => (targetHost = activeHostAddr)}
-                    >
-                      {activeHostAddr}
-                    </button>
-                  {/if}
+            <!-- Unix socket 为低频高级项，默认折叠以保持主路径清爽 -->
+            <details class="rounded-chip bg-base/40">
+              <summary class="cursor-pointer select-none px-2.5 py-2 text-2xs font-medium text-dim hover:text-ink">
+                {t(app.language, "tunnel.advancedSockets")}
+              </summary>
+              <div class="space-y-3 border-t border-edge/60 p-2.5">
+                <div class="grid grid-cols-2 gap-3">
+                  <div class="space-y-1.5">
+                    <Label for="t-lsocket">{t(app.language, "tunnel.localSocket")}</Label>
+                    <Input id="t-lsocket" placeholder="/tmp/sshnat.sock" bind:value={localSocket} class="font-mono" />
+                  </div>
+                  <div class="space-y-1.5">
+                    <Label for="t-tsocket">{t(app.language, "tunnel.targetSocket")}</Label>
+                    <Input id="t-tsocket" placeholder="/run/service.sock" bind:value={targetSocket} class="font-mono" />
+                  </div>
                 </div>
+                <p class="text-2xs text-dim-2">{t(app.language, "tunnel.socketHint")}</p>
               </div>
-              <Input id="t-thost" placeholder="127.0.0.1" bind:value={targetHost} disabled={!!targetSocket.trim()} class="font-mono" />
-            </div>
+            </details>
           </div>
           {#if !targetSocket.trim() && activeHostAddr && !/^(localhost|127\..*|\[?::1\]?)$/i.test(activeHostAddr) && targetHost.trim() === activeHostAddr}
             <div class="mt-2.5 flex items-center justify-between rounded bg-warn/10 border border-warn/30 px-2.5 py-1.5 text-[11px] text-warn">
@@ -533,17 +564,24 @@
                 <Input id="t-rport" placeholder="8080" bind:value={remotePort} disabled={!!remoteSocket.trim()} class="font-mono" inputmode="numeric" />
               </div>
             </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div class="space-y-1.5">
-                <Label for="t-rsocket">{t(app.language, "tunnel.remoteSocket")}</Label>
-                <Input id="t-rsocket" placeholder="/tmp/sshnat.sock" bind:value={remoteSocket} class="font-mono" />
+            <details class="rounded-chip bg-base/40">
+              <summary class="cursor-pointer select-none px-2.5 py-2 text-[11px] font-medium text-dim hover:text-ink">
+                {t(app.language, "tunnel.advancedSockets")}
+              </summary>
+              <div class="space-y-3 border-t border-edge/60 p-2.5">
+                <div class="grid grid-cols-2 gap-3">
+                  <div class="space-y-1.5">
+                    <Label for="t-rsocket">{t(app.language, "tunnel.remoteSocket")}</Label>
+                    <Input id="t-rsocket" placeholder="/tmp/sshnat.sock" bind:value={remoteSocket} class="font-mono" />
+                  </div>
+                  <div class="space-y-1.5">
+                    <Label for="t-rtargetsocket">{t(app.language, "tunnel.targetSocket")}</Label>
+                    <Input id="t-rtargetsocket" placeholder="/tmp/service.sock" bind:value={targetSocket} class="font-mono" />
+                  </div>
+                </div>
+                <p class="text-[11px] text-dim-2">{t(app.language, "tunnel.socketHint")}</p>
               </div>
-              <div class="space-y-1.5">
-                <Label for="t-rtargetsocket">{t(app.language, "tunnel.targetSocket")}</Label>
-                <Input id="t-rtargetsocket" placeholder="/tmp/service.sock" bind:value={targetSocket} class="font-mono" />
-              </div>
-            </div>
-            <p class="text-[11px] text-dim/70">{t(app.language, "tunnel.socketHint")}</p>
+            </details>
             <div class="grid grid-cols-2 gap-3">
               <div class="space-y-1.5">
                 <div class="flex items-center justify-between">
@@ -584,7 +622,7 @@
             <Select id="t-command-shell" value={commandShell} onValueChange={(shell) => (commandShell = shell as CommandShell)} options={commandShellOptions} />
           </div>
           <div class="flex items-start justify-between gap-2">
-          <div class={`min-w-0 flex-1 break-all font-mono text-[11px] ${commandPreview.error ? "text-bad" : "text-accent/90"} bg-base/80 rounded px-2.5 py-1.5 border border-edge/40 select-text`}>
+          <div class={`min-w-0 flex-1 break-all font-mono text-[11px] ${commandPreview.error ? "text-bad" : "text-accent/90"} bg-base rounded px-2.5 py-1.5 select-text`}>
             {commandPreview.error || previewSshCommand}
           </div>
           <button
@@ -604,9 +642,9 @@
           </button>
         </div>
         </div>
-      </fieldset>
+      </div>
 
-      <div class="flex items-center justify-between rounded-chip border border-edge px-3 py-2">
+      <div class="flex items-center justify-between rounded-chip bg-base/60 px-3 py-2">
         <Label for="t-autostart">{t(app.language, "tunnel.autoStart")}</Label>
         <Switch id="t-autostart" checked={autoStart} onCheckedChange={(v) => (autoStart = v)} />
       </div>
@@ -624,10 +662,10 @@
           id="t-cmd"
           bind:value={cmdText}
           rows={3}
-          class="w-full resize-none rounded-chip border border-edge bg-base px-2.5 py-2 font-mono text-xs text-ink placeholder:text-dim/60 focus:border-accent focus:outline-none"
+          class="w-full resize-none rounded-chip border border-edge bg-base px-2.5 py-2 font-mono text-xs text-ink placeholder:text-dim-2 focus:border-accent focus:outline-none"
           placeholder="ssh -L 8080:db.internal:3306 user@bastion.example.com"
         ></textarea>
-        <p class="text-[11px] text-dim/70">{t(app.language, "tunnel.commandHint")}</p>
+        <p class="text-[11px] text-dim-2">{t(app.language, "tunnel.commandHint")}</p>
       </div>
     {/if}
 

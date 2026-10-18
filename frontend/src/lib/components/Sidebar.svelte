@@ -2,13 +2,14 @@
   import {
     LayoutDashboard,
     Server,
-    ArrowLeftRight,
     ScrollText,
     Settings,
     ArrowUp,
     ArrowDown,
+    Command,
+    SquareTerminal,
   } from "@lucide/svelte";
-  import { app, type Page } from "@/lib/state.svelte";
+  import { app, gotoPage, type Page } from "@/lib/state.svelte";
   import { SettingsService, type AppInfo } from "@/lib/api";
   import { t } from "@/lib/i18n";
 
@@ -24,9 +25,8 @@
   });
 
   const items: { id: Page; key: string; icon: typeof LayoutDashboard }[] = [
-    { id: "dashboard", key: "nav.dashboard", icon: LayoutDashboard },
+    { id: "workbench", key: "nav.workbench", icon: LayoutDashboard },
     { id: "hosts", key: "nav.hosts", icon: Server },
-    { id: "tunnels", key: "nav.tunnels", icon: ArrowLeftRight },
     { id: "logs", key: "nav.logs", icon: ScrollText },
     { id: "settings", key: "nav.settings", icon: Settings },
   ];
@@ -45,12 +45,12 @@
 </script>
 
 <aside
-  class={`flex w-[68px] shrink-0 flex-col border-r border-edge bg-base sm:w-[240px] ${className}`}
+  class={`flex w-[64px] shrink-0 flex-col border-r border-edge bg-base sm:w-[220px] ${className}`}
   data-testid="sidebar"
 >
   <div class="flex h-14 items-center justify-center gap-2.5 border-b border-edge px-2 sm:justify-start sm:px-4">
-    <div class="flex size-7 items-center justify-center rounded-chip bg-accent/15">
-      <ArrowLeftRight size={16} class="text-accent" />
+    <div class="flex size-7 items-center justify-center rounded-chip bg-accent/15 ring-1 ring-accent/25">
+      <SquareTerminal size={15} class="text-accent" />
     </div>
     <div class="hidden items-baseline gap-2 sm:flex">
       <span class="text-[15px] font-semibold tracking-tight text-ink">SSHNat</span>
@@ -60,23 +60,39 @@
     </div>
   </div>
 
-  <nav class="flex-1 space-y-0.5 overflow-y-auto p-2">
+  <nav class="flex-1 space-y-1 overflow-y-auto p-2">
     {#each items as item (item.id)}
       <button
-        class={`flex w-full items-center justify-center gap-2.5 rounded-chip px-2.5 py-2 text-sm transition-colors sm:justify-start
+        class={`relative flex w-full items-center justify-center gap-2.5 rounded-chip px-2.5 py-2 text-sm transition-colors sm:justify-start
                 ${
                   app.page === item.id
-                    ? "bg-hover text-accent"
-                    : "text-dim hover:bg-hover hover:text-ink"
+                    ? "bg-hover font-medium text-ink"
+                    : "text-dim hover:bg-hover/60 hover:text-ink"
                 }`}
         title={t(app.language, item.key)}
-        onclick={() => (app.page = item.id)}
+        aria-current={app.page === item.id ? "page" : undefined}
+        onclick={() => gotoPage(item.id)}
       >
-        <item.icon size={16} />
+        {#if app.page === item.id}
+          <span class="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent"></span>
+        {/if}
+        <item.icon size={16} class={app.page === item.id ? "text-accent" : ""} />
         <span class="hidden sm:inline">{t(app.language, item.key)}</span>
       </button>
     {/each}
   </nav>
+
+  <!-- 命令面板入口 -->
+  <div class="hidden px-2 pb-2 sm:block">
+    <button
+      class="flex w-full items-center gap-2 whitespace-nowrap rounded-chip border border-edge bg-panel px-2 py-1.5 text-2xs text-dim transition-colors hover:border-accent/40 hover:text-ink"
+      onclick={() => (app.paletteOpen = true)}
+    >
+      <Command size={12} />
+      <span class="flex-1 text-left">{t(app.language, "palette.title")}</span>
+      <kbd class="rounded border border-edge px-1 py-0.5 font-mono text-[9px] text-dim-2">Ctrl K</kbd>
+    </button>
+  </div>
 
   <!-- 底部总上传/下载速率 -->
   <div class="hidden border-t border-edge p-3 sm:block">

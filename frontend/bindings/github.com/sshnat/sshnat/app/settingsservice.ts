@@ -8,11 +8,20 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
+import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Create } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
+
+/**
+ * CheckUpdate 查询 GitHub Releases 上的最新版本并与当前版本比较。
+ */
+export function CheckUpdate(): $CancellablePromise<$models.UpdateInfo | null> {
+    return $Call.ByID(555631144).then(($result: any) => {
+        return $$createType1($result);
+    });
+}
 
 /**
  * Export returns portable JSON. Credentials are omitted unless the user
@@ -34,7 +43,23 @@ export function ExportFile(includeSecrets: boolean): $CancellablePromise<string>
  * Get 返回应用信息。
  */
 export function Get(): $CancellablePromise<$models.AppInfo | null> {
-    return $Call.ByID(1510137809);
+    return $Call.ByID(1510137809).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
+/**
+ * GetAutoStart 报告是否已注册开机自启动。
+ */
+export function GetAutoStart(): $CancellablePromise<boolean> {
+    return $Call.ByID(1617532706);
+}
+
+/**
+ * GetLanguage 返回持久化的界面语言（"zh" | "en"）；未设置时为空字符串。
+ */
+export function GetLanguage(): $CancellablePromise<string> {
+    return $Call.ByID(28889959);
 }
 
 /**
@@ -43,5 +68,36 @@ export function Get(): $CancellablePromise<$models.AppInfo | null> {
  * Replace requires stopped tunnels and creates a full backup first.
  */
 export function Import(document: string, mode: string): $CancellablePromise<$models.ConfigImportResult | null> {
-    return $Call.ByID(3016877318, document, mode);
+    return $Call.ByID(3016877318, document, mode).then(($result: any) => {
+        return $$createType5($result);
+    });
 }
+
+/**
+ * PickFile 打开原生文件选择器（选择私钥/known_hosts 等），取消返回空字符串。
+ */
+export function PickFile(): $CancellablePromise<string> {
+    return $Call.ByID(1394886204);
+}
+
+/**
+ * SetAutoStart 开启或关闭开机自启动。
+ */
+export function SetAutoStart(enabled: boolean): $CancellablePromise<void> {
+    return $Call.ByID(3094451310, enabled);
+}
+
+/**
+ * SetLanguage 持久化界面语言，托盘等原生 UI 随之切换。
+ */
+export function SetLanguage(language: string): $CancellablePromise<void> {
+    return $Call.ByID(2304104371, language);
+}
+
+// Private type creation functions
+const $$createType0 = $models.UpdateInfo.createFrom;
+const $$createType1 = $Create.Nullable($$createType0);
+const $$createType2 = $models.AppInfo.createFrom;
+const $$createType3 = $Create.Nullable($$createType2);
+const $$createType4 = $models.ConfigImportResult.createFrom;
+const $$createType5 = $Create.Nullable($$createType4);

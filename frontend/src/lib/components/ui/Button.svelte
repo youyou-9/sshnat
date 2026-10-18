@@ -17,10 +17,11 @@
 
   const variants: Record<Variant, string> = {
     primary:
-      "bg-accent text-[var(--c-base)] font-medium hover:brightness-110 focus-visible:outline-accent",
-    secondary: "bg-panel border border-edge text-ink hover:bg-hover focus-visible:outline-edge",
-    ghost: "bg-transparent text-dim hover:text-ink hover:bg-hover focus-visible:outline-edge",
-    danger: "bg-transparent border border-bad/50 text-bad hover:bg-bad/10 focus-visible:outline-bad",
+      "bg-accent text-accent-ink font-semibold shadow-[0_6px_20px_-10px_var(--c-accent)] hover:brightness-105 hover:shadow-[0_8px_26px_-10px_var(--c-accent)] focus-visible:outline-accent",
+    secondary:
+      "bg-panel border border-edge text-ink hover:bg-hover hover:border-dim/40 focus-visible:outline-accent",
+    ghost: "bg-transparent text-dim hover:text-ink hover:bg-hover focus-visible:outline-accent",
+    danger: "bg-transparent border border-bad/40 text-bad hover:bg-bad/10 hover:border-bad/60 focus-visible:outline-bad",
   };
 
   const sizes: Record<Size, string> = {
@@ -31,8 +32,8 @@
 </script>
 
 <button
-  class={`inline-flex items-center justify-center whitespace-nowrap transition-colors
-          focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2
+  class={`inline-flex items-center justify-center whitespace-nowrap transition-all duration-150 active:scale-[0.98]
+          focus-visible:outline-2 focus-visible:outline-offset-2
           disabled:pointer-events-none disabled:opacity-50
           ${variants[variant]} ${sizes[size]} ${className}`}
   {...rest}

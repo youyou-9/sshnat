@@ -39,7 +39,7 @@
             px-2.5 text-sm transition-colors hover:border-dim/50
             focus:outline-none focus:border-accent disabled:opacity-50 ${className}`}
   >
-    <span class={value ? "text-ink" : "text-dim/60"}>{selectedLabel}</span>
+    <span class={value ? "text-ink" : "text-dim-2"}>{selectedLabel}</span>
     <ChevronDown size={14} class="text-dim" />
   </SelectPrimitive.Trigger>
 

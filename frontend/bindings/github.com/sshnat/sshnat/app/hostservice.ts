@@ -8,7 +8,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
+import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Create } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -28,8 +28,10 @@ export function Delete(id: string): $CancellablePromise<void> {
 /**
  * ListHosts 返回全部主机。
  */
-export function List(): $CancellablePromise<config$0.Host[] | null> {
-    return $Call.ByID(3548704148);
+export function List(): $CancellablePromise<config$0.Host[]> {
+    return $Call.ByID(3548704148).then(($result: any) => {
+        return $$createType1($result);
+    });
 }
 
 /**
@@ -46,5 +48,13 @@ export function Save(host: config$0.Host): $CancellablePromise<void> {
  * a successful handshake.
  */
 export function TestConnection(id: string): $CancellablePromise<$models.HostTestResult | null> {
-    return $Call.ByID(1672373696, id);
+    return $Call.ByID(1672373696, id).then(($result: any) => {
+        return $$createType3($result);
+    });
 }
+
+// Private type creation functions
+const $$createType0 = config$0.Host.createFrom;
+const $$createType1 = $Create.Array($$createType0);
+const $$createType2 = $models.HostTestResult.createFrom;
+const $$createType3 = $Create.Nullable($$createType2);

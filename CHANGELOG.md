@@ -1,6 +1,52 @@
 # Changelog
 
-## 1.1.0 — release candidate
+## 1.1.0 — workbench, remote terminal, launch at login, update checks
+
+### New
+
+- **Remote terminal**: open an interactive PTY shell for any saved host from the
+  host card or the command palette. Sessions follow the same ProxyJump,
+  authentication, and host-key path as tunnels. Multiple sessions live in a
+  docked, tabbed panel that stays mounted when collapsed, supports maximize and
+  per-tab close, and is closed with the application.
+- **Launch at login**: Settings toggle backed by the platform-native location on
+  Windows (Run key), macOS (LaunchAgents), and Linux (XDG autostart).
+- **Check for updates**: Settings compares the running version with the latest
+  GitHub release using SemVer-aware ordering (release > prerelease) and offers a
+  download link.
+- **Workbench**: the former Dashboard and Tunnels pages are merged into a single
+  workbench with a KPI strip, filters, and card/table views.
+- **Command palette**: `Ctrl/Cmd+K` searches actions, hosts, and tunnels;
+  `g w/h/l/s` jumps between pages.
+- **Native path pickers**: private keys and known_hosts files can be chosen with
+  the native file dialog instead of typing a path.
+- **New Tunnel dialog**: form and "paste an ssh command" modes are now explicit
+  top-level tabs; Unix socket options are collapsed under an advanced section.
+
+### Fixes
+
+- English UI no longer falls back to Chinese for the configuration import file
+  picker (the native input button is replaced with a localized control).
+- The tray menu, tray tunnel labels, and tray tooltip follow the selected
+  interface language (persisted in the configuration file).
+- Reconnecting tunnels show a live retry countdown.
+- Persisted language selection no longer silently diverges between the UI and
+  the tray; a failed backend write rolls back and reports the error.
+- Terminal sessions opened during a tab close, or exited before the open call
+  returned, are now closed or reported instead of leaking a session.
+- `theme = system` now applies the light card styling when the OS is in light
+  mode (`data-theme` is absent in that mode).
+
+### UI/UX
+
+- Toast notifications, confirm dialogs for destructive actions, per-card
+  overflow menus, host connection status dots, keyboard focus rings, skeleton
+  loading, and empty states with calls to action.
+- Refined theme tokens: deeper dark surface, layered card highlights, a radial
+  background glow, a tokenized scrim, and improved light-theme contrast
+  (AA-compliant accent and success colors).
+
+## 1.1.0-rc.1 — release candidate
 
 ### New controls
 

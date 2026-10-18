@@ -8,7 +8,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
+import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Create } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -18,23 +18,29 @@ import * as $models from "./models.js";
  * Create 创建隧道并持久化。
  */
 export function Create(req: $models.CreateTunnelRequest): $CancellablePromise<$models.TunnelView | null> {
-    return $Call.ByID(2799198192, req);
+    return $Call.ByID(2799198192, req).then(($result: any) => {
+        return $$createType1($result);
+    });
 }
 
 /**
  * CreateFromSSHCommand 解析 `ssh -L ... user@host` 并创建主机 + 隧道。
  * 返回新建的隧道视图列表。
  */
-export function CreateFromSSHCommand(cmd: string): $CancellablePromise<$models.TunnelView[] | null> {
-    return $Call.ByID(1197033139, cmd);
+export function CreateFromSSHCommand(cmd: string): $CancellablePromise<$models.TunnelView[]> {
+    return $Call.ByID(1197033139, cmd).then(($result: any) => {
+        return $$createType2($result);
+    });
 }
 
 /**
  * CreateFromSSHCommandForShell imports a command quoted for posix or
  * powershell. An empty shell keeps the operating system's default.
  */
-export function CreateFromSSHCommandForShell(cmd: string, shell: string): $CancellablePromise<$models.TunnelView[] | null> {
-    return $Call.ByID(3638925160, cmd, shell);
+export function CreateFromSSHCommandForShell(cmd: string, shell: string): $CancellablePromise<$models.TunnelView[]> {
+    return $Call.ByID(3638925160, cmd, shell).then(($result: any) => {
+        return $$createType2($result);
+    });
 }
 
 /**
@@ -48,14 +54,18 @@ export function Delete(id: string): $CancellablePromise<void> {
  * Get 按 ID 返回单个隧道视图。
  */
 export function Get(id: string): $CancellablePromise<$models.TunnelView | null> {
-    return $Call.ByID(2931146336, id);
+    return $Call.ByID(2931146336, id).then(($result: any) => {
+        return $$createType1($result);
+    });
 }
 
 /**
  * List 返回全部隧道及其实时状态。
  */
-export function List(): $CancellablePromise<$models.TunnelView[] | null> {
-    return $Call.ByID(3075803916);
+export function List(): $CancellablePromise<$models.TunnelView[]> {
+    return $Call.ByID(3075803916).then(($result: any) => {
+        return $$createType2($result);
+    });
 }
 
 /**
@@ -76,5 +86,12 @@ export function Stop(id: string): $CancellablePromise<void> {
  * Update 更新已有隧道配置（运行中会先停止并在保存后重新启动）。
  */
 export function Update(req: $models.UpdateTunnelRequest): $CancellablePromise<$models.TunnelView | null> {
-    return $Call.ByID(3447997413, req);
+    return $Call.ByID(3447997413, req).then(($result: any) => {
+        return $$createType1($result);
+    });
 }
+
+// Private type creation functions
+const $$createType0 = $models.TunnelView.createFrom;
+const $$createType1 = $Create.Nullable($$createType0);
+const $$createType2 = $Create.Array($$createType0);

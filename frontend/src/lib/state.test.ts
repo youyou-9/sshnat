@@ -32,6 +32,10 @@ vi.mock("./api", () => ({
     Save: vi.fn().mockResolvedValue(undefined),
     Delete: vi.fn().mockResolvedValue(undefined),
   },
+  SettingsService: {
+    GetLanguage: vi.fn().mockResolvedValue(""),
+    SetLanguage: vi.fn().mockResolvedValue(undefined),
+  },
 }));
 
 import { app, initApp, setLanguage, deleteTunnel, startTunnel, stopTunnel, setAllTunnelsRunning } from "./state.svelte";

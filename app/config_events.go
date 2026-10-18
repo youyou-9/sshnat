@@ -20,4 +20,7 @@ func (s *Services) Shutdown() {
 	defer s.tmu.Unlock()
 	s.closing = true
 	s.Sup.StopAll()
+	if s.Term != nil {
+		s.Term.CloseAll()
+	}
 }

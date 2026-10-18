@@ -3,7 +3,7 @@
   import Dialog from "@/lib/components/ui/Dialog.svelte";
   import Button from "@/lib/components/ui/Button.svelte";
   import Badge from "@/lib/components/ui/Badge.svelte";
-  import { app } from "@/lib/state.svelte";
+  import { app, gotoPage } from "@/lib/state.svelte";
   import { t } from "@/lib/i18n";
   import type { Tunnel } from "@/lib/api";
   import { copyText } from "@/lib/tunnel-command";
@@ -58,7 +58,7 @@
 
   function goToAllLogs() {
     open = false;
-    app.page = "logs";
+    gotoPage("logs");
   }
 
   $effect(() => {
@@ -77,8 +77,12 @@
     <!-- 头部小工具栏 -->
     <div class="flex items-center justify-between text-xs border-b border-edge/60 pb-2">
       <div class="flex items-center gap-2">
-        <Badge tone={tunnel.status === 'connected' ? 'ok' : tunnel.status === 'reconnecting' ? 'warn' : 'dim'}>
-          {tunnel.status}
+        <Badge tone={tunnel.status === 'connected' ? 'ok' : tunnel.status === 'reconnecting' ? 'warn' : tunnel.status === 'error' ? 'dim' : 'dim'}>
+          {#if tunnel.status === "connected"}{t(app.language, "status.connected")}
+          {:else if tunnel.status === "reconnecting"}{t(app.language, "status.reconnecting")}
+          {:else if tunnel.status === "starting"}{t(app.language, "status.connecting")}
+          {:else if tunnel.status === "error"}{t(app.language, "status.error")}
+          {:else}{t(app.language, "status.stopped")}{/if}
         </Badge>
         <span class="text-dim">{tunnelLogs.length} {t(app.language, "logs.records")}</span>
       </div>
@@ -134,7 +138,7 @@
           {#each tunnelLogs as log (log.id)}
             {@const lvl = getLogLevel(log.message)}
             <li class="flex items-baseline gap-2.5 rounded px-1.5 py-0.5 hover:bg-hover transition-colors">
-              <span class="shrink-0 text-[11px] text-dim/60 font-mono" title={log.time}>
+              <span class="shrink-0 text-[11px] text-dim-2 font-mono" title={log.time}>
                 {formatTime(log.time)}
               </span>
               <span

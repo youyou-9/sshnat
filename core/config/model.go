@@ -81,9 +81,11 @@ type Tunnel struct {
 
 // Settings 是完整配置文档。
 type Settings struct {
-	Version int      `json:"version"`
-	Hosts   []Host   `json:"hosts"`
-	Tunnels []Tunnel `json:"tunnels"`
+	Version int `json:"version"`
+	// Language 持久化界面语言（"zh" | "en"），托盘等原生 UI 据此双语显示。
+	Language string   `json:"language,omitempty"`
+	Hosts    []Host   `json:"hosts"`
+	Tunnels  []Tunnel `json:"tunnels"`
 }
 
 // FindHost 按 ID 查找主机。

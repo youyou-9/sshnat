@@ -4,8 +4,10 @@
   import { t } from "@/lib/i18n";
   import Button from "@/lib/components/ui/Button.svelte";
   import Select from "@/lib/components/ui/Select.svelte";
+  import ConfirmDialog from "@/lib/components/ui/ConfirmDialog.svelte";
   import { copyText } from "@/lib/tunnel-command";
 
+  let clearConfirmOpen = $state(false);
   let follow = $state(true);
   let copied = $state(false);
   let logContainer = $state<HTMLElement | null>(null);
@@ -78,7 +80,7 @@
 <div class="flex h-full flex-col">
   <header class="flex h-14 shrink-0 items-center justify-between border-b border-edge px-5">
     <div class="flex items-center gap-3">
-      <h1 class="text-[15px] font-semibold text-ink">{t(app.language, "logs.title")}</h1>
+      <h1 class="text-title font-semibold tracking-[-0.01em] text-ink">{t(app.language, "logs.title")}</h1>
       <span class="rounded-chip bg-panel border border-edge px-2 py-0.5 font-mono text-[11px] text-dim">
         {filteredLogs.length} / {app.logs.length}
       </span>
@@ -109,7 +111,7 @@
       </button>
 
       {#if app.logs.length > 0}
-        <Button variant="ghost" size="sm" onclick={clearLogs}>
+        <Button variant="ghost" size="sm" onclick={() => (clearConfirmOpen = true)}>
           <Trash2 size={13} class="mr-1" />
           {t(app.language, "logs.clear")}
         </Button>
@@ -129,7 +131,7 @@
         type="text"
         placeholder={t(app.language, "logs.searchPlaceholder")}
         bind:value={searchKeyword}
-        class="h-8 w-full rounded-chip border border-edge bg-base pl-8 pr-2.5 text-xs text-ink placeholder:text-dim/60 focus:border-accent focus:outline-none"
+        class="h-8 w-full rounded-chip border border-edge bg-base pl-8 pr-2.5 text-xs text-ink placeholder:text-dim-2 focus:border-accent focus:outline-none"
       />
     </div>
   </div>
@@ -147,7 +149,7 @@
           {@const lvl = getLogLevel(log.message)}
           {@const tunName = app.tunnels.find((t) => t.id === log.tunnelId)?.name}
           <li class="flex items-baseline gap-2.5 rounded-chip px-2.5 py-1.5 hover:bg-hover transition-colors">
-            <span class="shrink-0 font-mono text-[11px] text-dim/60" title={log.time}>
+            <span class="shrink-0 font-mono text-[11px] text-dim-2" title={log.time}>
               {formatTime(log.time)}
             </span>
             {#if log.tunnelId}
@@ -174,3 +176,11 @@
     {/if}
   </div>
 </div>
+
+<ConfirmDialog
+  bind:open={clearConfirmOpen}
+  title={t(app.language, "logs.clear")}
+  message={t(app.language, "logs.clearConfirm")}
+  confirmLabel={t(app.language, "logs.clear")}
+  onConfirm={clearLogs}
+/>

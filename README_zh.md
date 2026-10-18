@@ -2,6 +2,8 @@
 
 <div align="center">
 
+<img src="build/appicon.png" width="112" alt="SSHNat 图标" />
+
 **现代轻量级 SSH 端口转发客户端与无头后台守护进程**  
 *A Modern Lightweight SSH Port Forwarding Desktop Client & Headless Daemon*
 
@@ -10,6 +12,7 @@
 [![Wails Version](https://img.shields.io/badge/Wails-v3.0.0--beta.11-DF0000?logo=wails)]()
 [![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-v1.1.0-2dd4bf)](https://github.com/youyou-9/sshnat/releases)
 
 [🇬🇧 English Documentation](README.md) · [🇨🇳 简体中文](README_zh.md)
 
@@ -39,6 +42,8 @@
 ---
 
 ### ✨ 核心功能
+- **远程终端与工作台**：多标签 PTY 终端 Dock，支持字体族/字号设置与 Ctrl+滚轮、Ctrl+加号/减号缩放；仪表盘与隧道合并为工作台，并内置 Ctrl/⌘+K 命令面板。
+- **开机自启动与检查更新**：Windows / macOS / Linux 原生开机自启动；按 SemVer 对比 GitHub Releases 检查更新。
 - **全模式端口转发**：
   - **本地转发 (`-L`)**：本地监听端口经 SSH 隧道访问远端私网服务或本地回环服务（支持 TCP 与 Unix Socket）。
   - **远程反向转发 (`-R`)**：在远端 SSH 服务器监听，接收连接并回连本机目标服务（内网穿透）。

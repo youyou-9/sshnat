@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"time"
@@ -25,6 +26,18 @@ type sshRawClient interface {
 	Listen(network, addr string) (net.Listener, error)
 	ListenUnix(socketPath string) (net.Listener, error)
 	OpenChannel(name string, data []byte) (gossh.Channel, <-chan *gossh.Request, error)
+}
+
+// NewSession 打开一个交互会话（shell/pty），供远程终端等功能使用。
+// *gossh.Client 与 chainedClient 都内嵌 *sshClient，天然满足该能力。
+func (c *Client) NewSession() (*gossh.Session, error) {
+	sessioner, ok := c.sshRawClient.(interface {
+		NewSession() (*gossh.Session, error)
+	})
+	if !ok {
+		return nil, errors.New("ssh: client does not support sessions")
+	}
+	return sessioner.NewSession()
 }
 
 // ListenUnix requests an OpenSSH stream-local forward on the server. It is

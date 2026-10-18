@@ -34,18 +34,23 @@ const Label = domComponent(`<script>let { children, ...rest } = $props();</scrip
 const Select = domComponent(`<script>let {value=$bindable(''),options=[],disabled=false,id}= $props();</script><select {id} {disabled} bind:value>{#each options as option}<option value={option.value}>{option.label}</option>{/each}</select>`);
 const Switch = domComponent(`<script>let {checked=false,disabled=false,id,onCheckedChange}=$props();</script><button {id} {disabled} role="switch" aria-checked={checked} onclick={()=>onCheckedChange?.(!checked)}></button>`);
 const Icon = domComponent(`<svg aria-hidden="true"></svg>`);
+const ConfirmDialog = domComponent(`<script>let { open = $bindable(false) } = $props();</script>{#if open}<div data-testid="confirm-dialog"></div>{/if}`);
 
 const SettingsService = { Import: vi.fn(), Export: vi.fn(), ExportFile: vi.fn() };
 const refreshHosts = vi.fn();
 const refreshTunnels = vi.fn();
+const pushToast = vi.fn();
+const pruneTerminalState = vi.fn();
 const app = { language: "en", txHistory: {}, rxHistory: {} };
 const copyText = vi.fn();
 const ConfigTransfer = domComponent(source, {
   "@lucide/svelte": { Copy: Icon, Download: Icon, FileUp: Icon },
   "@/lib/api": { SettingsService },
-  "@/lib/state.svelte": { app, refreshHosts, refreshTunnels },
+  "@/lib/state.svelte": { app, refreshHosts, refreshTunnels, pushToast, pruneTerminalState },
+  "@/lib/i18n": { t: (_lang: string, key: string) => key },
   "@/lib/tunnel-command": { copyText },
   "@/lib/components/ui/Button.svelte": Button,
+  "@/lib/components/ui/ConfirmDialog.svelte": ConfirmDialog,
   "@/lib/components/ui/Label.svelte": Label,
   "@/lib/components/ui/Select.svelte": Select,
   "@/lib/components/ui/Switch.svelte": Switch,

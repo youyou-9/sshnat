@@ -12,8 +12,8 @@
 <input
   bind:value
   class={`h-8 w-full rounded-chip border border-edge bg-base px-2.5 text-sm text-ink
-          placeholder:text-dim/60 transition-colors
-          hover:border-dim/50 focus:outline-none focus:border-accent
+          placeholder:text-dim-2 transition-all duration-150
+          hover:border-dim/45 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/15
           disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
   {...rest}
 />
