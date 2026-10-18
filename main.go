@@ -53,6 +53,8 @@ func main() {
 	wailsApp := application.New(application.Options{
 		Name:        version.Name,
 		Description: "SSH port forwarding client",
+		// The same artwork drives the window, tray, about dialog, and installers.
+		Icon: appIcon,
 		// Native termination, especially NSApp terminate on macOS, must
 		// release tunnels before the platform exits without Go defers.
 		OnShutdown: shutdown,

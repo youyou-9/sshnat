@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.1 — brand icon everywhere
+
+### Fixed
+
+- The in-app sidebar brand mark now renders the real SSHNat logo instead of the
+  generic terminal glyph, so the window, taskbar, tray, sidebar, and About
+  dialog all show the same artwork.
+- The application icon is passed to the Wails app options, which also fixes the
+  About dialog / Linux window icon rather than relying on the executable
+  resource alone.
+
+### Added
+
+- Adjustable SSH terminal font family and size in **Settings → Terminal
+  appearance**, with a live preview and persisted choice.
+- Terminal zoom inside the terminal: `Ctrl`/`Cmd` + mouse wheel, `Ctrl` + `+`/`-`,
+  and `Ctrl` + `0` to reset. All open sessions update immediately.
+
 ## 1.1.0 — workbench, remote terminal, launch at login, update checks
 
 ### New
