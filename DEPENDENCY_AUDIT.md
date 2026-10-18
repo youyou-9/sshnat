@@ -23,16 +23,29 @@ Go `1.26.3` toolchain found these reachable advisories:
 | Component | Advisories | Repair |
 | --- | --- | --- |
 | `golang.org/x/crypto/ssh@v0.55.0` | GO-2026-6354, GO-2026-6355 | Upgrade `golang.org/x/crypto` to `v0.56.0` |
-| Go standard library | GO-2026-6218, GO-2026-6090, GO-2026-5972, GO-2026-5856, GO-2026-5039, GO-2026-5037, GO-2026-5026 | Require Go `1.26.6` or newer |
+| Go standard library | GO-2026-6218, GO-2026-6090, GO-2026-5972, GO-2026-5856, GO-2026-5039, GO-2026-5037, GO-2026-5026 | Require Go `1.26.6` or newer (superseded by 1.26.9, see below) |
 
 `go.mod`, all CI builds, Docker builder images, the Docker Taskfile default,
-and both READMEs now use Go `1.26.6` as the minimum release baseline. Go's
-automatic toolchain selection successfully downloaded and used `go1.26.6`
+and both READMEs now use Go `1.26.9` as the minimum release baseline. Go's
+automatic toolchain selection successfully downloaded and used `go1.26.9`
 on Windows. Wails and `@wailsio/runtime` remain matched at `v3.0.0-beta.11`.
+
+### 2026-10 follow-up: Go 1.26.9 required
+
+New standard-library advisories were published after the 1.1.0-rc.1 build and
+made the pinned `1.26.6` fail the reachable-vulnerability gate:
+
+| Component | Advisories | Repair |
+| --- | --- | --- |
+| Go standard library (`net/http`, `crypto/tls`, `mime/multipart`) | GO-2026-6603, GO-2026-6605, GO-2026-6607, GO-2026-6608, GO-2026-6609, GO-2026-6610, GO-2026-6611, GO-2026-6612, GO-2026-6613, GO-2026-6617 | Require Go `1.26.9` or newer |
+
+`govulncheck@v1.8.0 ./...` now reports **0 reachable vulnerabilities** with Go
+`1.26.9`. The npm advisory GHSA-68fv-2mgg-jv7q (`source-map-js`) is pinned
+through a `source-map-js@^1.2.2` override, so `npm audit` is clean again.
 
 ## Verification after repair
 
-The following passed on Windows/amd64 with Go `1.26.6`:
+The following passed on Windows/amd64 with Go `1.26.9`:
 
 ```bash
 npm --prefix frontend audit --json

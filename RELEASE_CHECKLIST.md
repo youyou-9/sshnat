@@ -2,7 +2,7 @@
 
 ## 1. 自动化质量门禁
 
-在仓库根目录执行（Go 1.26.6+、Node.js 24.15+）：
+在仓库根目录执行（Go 1.26.9+、Node.js 24.15+）：
 
 ```bash
 npm --prefix frontend ci
