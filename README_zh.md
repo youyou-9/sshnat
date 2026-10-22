@@ -8,7 +8,7 @@
 *A Modern Lightweight SSH Port Forwarding Desktop Client & Headless Daemon*
 
 [![Build Status](https://github.com/youyou-9/sshnat/actions/workflows/build.yml/badge.svg)](https://github.com/youyou-9/sshnat/actions/workflows/build.yml)
-[![Go Version](https://img.shields.io/badge/Go-1.26.9+-00ADD8?logo=go)]()
+[![Go Version](https://img.shields.io/badge/Go-1.26.10+-00ADD8?logo=go)]()
 [![Wails Version](https://img.shields.io/badge/Wails-v3.0.0--beta.11-DF0000?logo=wails)]()
 [![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)]()
@@ -101,8 +101,8 @@ sshnat/
 ### 🚀 快速开始与构建
 
 #### 系统环境依赖
-- **Go**：1.26.9+（包含发行检查要求的安全修复）
-  - 可选的混淆构建需从 [go.dev/dl](https://go.dev/dl/) 直接安装 Go 1.26.9；Garble 无法修补 Go 模块缓存中自动下载的工具链。
+- **Go**：1.26.10+（包含发行检查要求的安全修复）
+  - 可选的混淆构建需从 [go.dev/dl](https://go.dev/dl/) 直接安装 Go 1.26.10；Garble 无法修补 Go 模块缓存中自动下载的工具链。
 - **Node.js**：24.15+ 与 npm（锁定的 Vite/Vitest/jsdom 工具链要求 Node 24.15+）
 - **Wails 3 CLI**：
   ```bash

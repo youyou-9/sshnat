@@ -43,6 +43,20 @@ made the pinned `1.26.6` fail the reachable-vulnerability gate:
 `1.26.9`. The npm advisory GHSA-68fv-2mgg-jv7q (`source-map-js`) is pinned
 through a `source-map-js@^1.2.2` override, so `npm audit` is clean again.
 
+### 2026-10 follow-up: Go 1.26.10 and refreshed npm tooling
+
+Between the 1.1.1 release and the 1.1.2 build, three more advisories landed:
+
+| Component | Advisories | Repair |
+| --- | --- | --- |
+| Go standard library (`crypto/x509`) | GO-2026-6809 (distrust compromised intermediate certificates) | Require Go `1.26.10` or newer |
+| `vite@8.2.2` | GHSA-698v-4r3x-3vcv, GHSA-r825-w8mm-5pxw, plus the other `launch-editor`/`server.fs` fixes in `8.2.3` | Upgrade to `vite@8.3.5` |
+| `vitest@4.1.11` / `@vitest/mocker` | GHSA-qxg6-89mg-rqv8, GHSA-xp26-3454-mjgp | Upgrade to `vitest@4.1.12` |
+
+`go.mod`, all CI builds, the Docker builder images, and both READMEs now use
+Go `1.26.10`; `npm audit` reports **0 vulnerabilities** and `govulncheck`
+**0 reachable vulnerabilities** for the 1.1.2 tree.
+
 ## Verification after repair
 
 The following passed on Windows/amd64 with Go `1.26.9`:
