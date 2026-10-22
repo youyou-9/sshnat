@@ -5,6 +5,139 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/appicon.png" />
     <title>SSHNat</title>
+    <script>
+      /*
+       * 启动兜底（内联脚本，不依赖打包产物）。
+       *
+       * WebView2 的本地存储损坏、被占用或入口模块抛错时，Svelte 根本挂不上，
+       * 用户看到的会是一个没有任何提示的纯白窗口，重启也不会恢复。这里在界面
+       * 挂载前放一个看门狗：既收集未捕获异常，也在超时后给出可操作的提示，
+       * 并提供"重置界面数据并重试"（清掉坏掉的 localStorage 后重载）。
+       * 界面正常挂载后本脚本不再介入。
+       */
+      (function () {
+        var MOUNT_DEADLINE_MS = 4000;
+        var shown = false;
+        var detail = "";
+
+        function mounted() {
+          var root = document.getElementById("app");
+          return !!(root && root.childElementCount > 0);
+        }
+
+        function describe(err) {
+          if (!err) return "";
+          if (typeof err === "string") return err;
+          var name = err && err.name ? err.name + ": " : "";
+          return name + ((err && err.message) || String(err));
+        }
+
+        function remember(err) {
+          var text = describe(err);
+          if (text && text !== detail) {
+            detail = text;
+            console.error("[SSHNat] startup error:", err);
+          }
+        }
+
+        function resetAndRetry() {
+          try {
+            window.localStorage.clear();
+          } catch (e) {
+            /* 存储本来就坏掉了，忽略 */
+          }
+          try {
+            window.sessionStorage.clear();
+          } catch (e) {
+            /* 同上 */
+          }
+          window.location.reload();
+        }
+
+        function show(reason) {
+          if (shown || mounted()) return;
+          shown = true;
+          var zh = /^zh/i.test(navigator.language || "");
+          var host = document.getElementById("app") || document.body;
+
+          var box = document.createElement("div");
+          box.setAttribute("role", "alert");
+          box.style.cssText =
+            "max-width:560px;margin:12vh auto 0;padding:28px 30px;border-radius:14px;" +
+            "font:14px/1.6 'Segoe UI','Microsoft YaHei',system-ui,sans-serif;" +
+            "background:#ffffff;color:#111827;border:1px solid #dbe2ea;" +
+            "box-shadow:0 24px 56px -24px rgba(15,23,42,.35);";
+
+          var title = document.createElement("div");
+          title.style.cssText = "font-size:16px;font-weight:600;margin-bottom:10px;";
+          title.textContent = zh ? "SSHNat 界面没能加载出来" : "SSHNat could not load its interface";
+
+          var body = document.createElement("div");
+          body.style.cssText = "color:#4b5563;margin-bottom:14px;";
+          body.textContent = zh
+            ? "主界面在启动时中断了，通常是本地界面缓存损坏或磁盘/权限异常导致。可以先点“重置界面数据并重试”。"
+            : "The UI aborted while starting — usually a damaged local cache or a storage/permission problem. Try “Reset UI data & retry” first.";
+
+          var pre = document.createElement("pre");
+          pre.style.cssText =
+            "margin:0 0 18px;padding:10px 12px;border-radius:8px;background:#f3f5f8;" +
+            "color:#334155;font:12px/1.5 Consolas,monospace;white-space:pre-wrap;word-break:break-word;" +
+            "user-select:text;max-height:140px;overflow:auto;";
+          pre.textContent = (reason ? reason + "\n" : "") + (detail || (zh ? "（没有捕获到具体错误信息）" : "(no error message captured)"));
+
+          var row = document.createElement("div");
+          row.style.cssText = "display:flex;gap:10px;flex-wrap:wrap;";
+
+          var retry = document.createElement("button");
+          retry.textContent = zh ? "重试" : "Retry";
+          retry.style.cssText =
+            "padding:8px 16px;border-radius:8px;border:1px solid #dbe2ea;background:#fff;" +
+            "color:#111827;font:inherit;cursor:pointer;";
+          retry.onclick = function () {
+            window.location.reload();
+          };
+
+          var reset = document.createElement("button");
+          reset.textContent = zh ? "重置界面数据并重试" : "Reset UI data & retry";
+          reset.style.cssText =
+            "padding:8px 16px;border-radius:8px;border:1px solid #0e7490;background:#0e7490;" +
+            "color:#fff;font:inherit;cursor:pointer;";
+          reset.onclick = resetAndRetry;
+
+          row.appendChild(retry);
+          row.appendChild(reset);
+          box.appendChild(title);
+          box.appendChild(body);
+          box.appendChild(pre);
+          box.appendChild(row);
+
+          host.textContent = "";
+          host.appendChild(box);
+        }
+
+        window.addEventListener(
+          "error",
+          function (event) {
+            var target = event.target || event.srcElement;
+            if (target && target !== window && target.tagName) {
+              // 资源加载失败（bundle/css 404 或解码失败）同样会让界面永远挂不上
+              remember("failed to load " + target.tagName.toLowerCase() + ": " + (target.src || target.href || "?"));
+            } else {
+              remember(event.error || event.message);
+            }
+            if (!mounted()) show("");
+          },
+          true
+        );
+        window.addEventListener("unhandledrejection", function (event) {
+          remember(event.reason);
+          if (!mounted()) show("");
+        });
+        window.setTimeout(function () {
+          if (!mounted()) show("");
+        }, MOUNT_DEADLINE_MS);
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

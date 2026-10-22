@@ -48,11 +48,12 @@
   data-testid="sidebar"
 >
   <div class="flex h-14 items-center justify-center gap-2.5 border-b border-edge px-2 sm:justify-start sm:px-4">
-    <!-- 使用应用真实图标（与窗口/任务栏/托盘同一张），不再是通用终端占位图 -->
+    <!-- 使用应用真实图标（与窗口/任务栏/托盘同一张），不再是通用终端占位图；
+         圆角方形由图标本身裁好，这里只做等比例展示与描边 -->
     <img
       src="/appicon.png"
       alt="SSHNat"
-      class="size-7 shrink-0 rounded-chip object-cover ring-1 ring-edge/70"
+      class="size-7 shrink-0 rounded-[7px] object-cover ring-1 ring-edge/70"
       draggable="false"
     />
     <div class="hidden items-baseline gap-2 sm:flex">

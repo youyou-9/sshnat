@@ -1,11 +1,11 @@
 {
 	"fixed": {
-		"file_version": "1.1.1"
+		"file_version": "1.1.2"
 	},
 	"info": {
 		"0409": {
-			"FileVersion": "1.1.1",
-			"ProductVersion": "1.1.1",
+			"FileVersion": "1.1.2",
+			"ProductVersion": "1.1.2",
 			"CompanyName": "SSHNat",
 			"FileDescription": "SSHNat - SSH port forwarding client",
 			"LegalCopyright": "© 2026, SSHNat",

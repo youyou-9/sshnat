@@ -4,6 +4,7 @@ import (
 	"embed"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -71,7 +72,7 @@ func main() {
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
 		Linux:   application.LinuxOptions{DisableQuitOnLastWindowClosed: true},
-		Windows: application.WindowsOptions{DisableQuitOnLastWindowClosed: true},
+		Windows: application.WindowsOptions{DisableQuitOnLastWindowClosed: true, WebviewUserDataPath: webviewDataPath()},
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "com.sshnat.desktop",
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
@@ -276,6 +277,20 @@ func main() {
 		shutdown()
 		log.Fatal(err)
 	}
+}
+
+// webviewDataPath 是 WebView2 的用户数据目录。默认位置按 exe 名生成
+// （%APPDATA%\SSHNat.exe\EBWebView），一旦那里的本地存储损坏，前端入口模块
+// 读取 localStorage 就会抛错、Svelte 挂不上，用户看到的是永久白窗口。
+// 显式指定一个产品名下的路径有两个好处：路径可预期便于排查，并且升级到
+// 1.1.2 时会自动换到干净目录，之前被损坏的界面缓存不再拖累新版本。
+// 取不到用户配置目录时返回空串，交回 Wails 的默认行为。
+func webviewDataPath() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "SSHNat", "webview")
 }
 
 // openConfigDir opens the directory containing the active configuration with

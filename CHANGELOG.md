@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.1.2 — recoverable startup
+
+### Fixed
+
+- **Blank window on start.** A damaged or locked WebView2 `Local Storage`
+  database made the module-level preference reads throw, which aborted
+  evaluation of the entry module before Svelte could mount: the window stayed
+  white and restarting did not help, because the damaged profile was still
+  there. All storage access now goes through `lib/storage.ts`, which never
+  throws, probes the backend once, and clears a store that only fails before
+  `clear()`, so the UI always renders with defaults.
+- **Silent startup failures.** `index.html` now carries a bootstrap watchdog:
+  if the entry bundle has not mounted within four seconds, or a script/style
+  fails to load or throws, the window shows a "SSHNat could not load its
+  interface" panel with the captured error plus **Retry** and **Reset UI data &
+  retry** (clears the damaged `localStorage`, then reloads) instead of an empty
+  white page.
+- **Latent boot-order bug.** `TERMINAL_FONT_MIN/MAX` and `TERMINAL_FONTS` were
+  declared after the `$state` object that reads them, so a persisted terminal
+  font size could hit the temporal dead zone while the module initialised. The
+  constants now come first, and four bootstrap regression tests keep a
+  persisted font/size and a throwing storage backend bootable.
+
+### Changed
+
+- The WebView2 profile now lives in `%APPDATA%\SSHNat\webview` instead of the
+  binary-derived default: the path is predictable for support, and upgrading
+  from 1.1.1 moves everyone onto a clean profile, so an already damaged cache
+  cannot keep breaking the new build.
+- The app icon is a tightly cropped rounded square; the previous artwork was
+  mostly empty margin, which turned into a pale blob at 16–28 px. Sidebar,
+  window/taskbar, tray, installers, and the README now share the same tile.
+
 ## 1.1.1 — brand icon everywhere
 
 ### Fixed

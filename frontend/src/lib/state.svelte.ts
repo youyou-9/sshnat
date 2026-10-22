@@ -12,6 +12,7 @@ import {
 } from "./api";
 import { t, type Locale } from "./i18n";
 import { loadTheme, applyTheme, type ThemeMode } from "./theme";
+import { readSetting, writeSetting } from "./storage";
 
 export type Page = "workbench" | "hosts" | "logs" | "settings";
 export type LogEntry = { id: number; time: string; message: string; tunnelId?: string };
@@ -21,6 +22,21 @@ export type TerminalTab = { id: string; hostId: string; title: string; subtitle:
 let logIdSeq = 0;
 const statusEventRevisions = new Map<string, number>();
 
+/** 可选等宽字体：都带系统回退，缺失时自动落到下一项。 */
+export const TERMINAL_FONTS = [
+  "JetBrains Mono",
+  "Cascadia Code",
+  "Fira Code",
+  "Consolas",
+  "monospace",
+] as const;
+
+export const TERMINAL_FONT_MIN = 9;
+export const TERMINAL_FONT_MAX = 28;
+
+// 注意：这些常量必须定义在 `app` 之前——`app` 的初始化会调用下面的
+// loadTerminalFont*/loadTerminalFontSize，而 const 在声明前处于 TDZ，
+// 一旦读取就是 ReferenceError，会直接打断入口模块求值（白窗口）。
 export const app = $state({
   page: "workbench" as Page,
   language: loadLanguage(),
@@ -63,38 +79,26 @@ export const app = $state({
   terminalFontSize: loadTerminalFontSize(),
 });
 
-/** 可选等宽字体：都带系统回退，缺失时自动落到下一项。 */
-export const TERMINAL_FONTS = [
-  "JetBrains Mono",
-  "Cascadia Code",
-  "Fira Code",
-  "Consolas",
-  "monospace",
-] as const;
-
-export const TERMINAL_FONT_MIN = 9;
-export const TERMINAL_FONT_MAX = 28;
-
 function loadTerminalFont(): string {
-  const saved = getStorage()?.getItem("sshnat.termFont");
+  const saved = readSetting("sshnat.termFont");
   return saved && (TERMINAL_FONTS as readonly string[]).includes(saved) ? saved : "JetBrains Mono";
 }
 
 function loadTerminalFontSize(): number {
-  const saved = Number(getStorage()?.getItem("sshnat.termFontSize"));
+  const saved = Number(readSetting("sshnat.termFontSize"));
   return Number.isFinite(saved) && saved >= TERMINAL_FONT_MIN && saved <= TERMINAL_FONT_MAX ? saved : 13;
 }
 
 export function setTerminalFont(family: string) {
   if (!(TERMINAL_FONTS as readonly string[]).includes(family)) return;
   app.terminalFontFamily = family;
-  getStorage()?.setItem("sshnat.termFont", family);
+  writeSetting("sshnat.termFont", family);
 }
 
 export function setTerminalFontSize(size: number) {
   const clamped = Math.min(TERMINAL_FONT_MAX, Math.max(TERMINAL_FONT_MIN, Math.round(size)));
   app.terminalFontSize = clamped;
-  getStorage()?.setItem("sshnat.termFontSize", String(clamped));
+  writeSetting("sshnat.termFontSize", String(clamped));
   return clamped;
 }
 
@@ -193,8 +197,7 @@ export function dismissToast(id: number) {
 }
 
 function loadLanguage(): Locale {
-  const storage = getStorage();
-  return storage?.getItem("sshnat.language") === "en" ? "en" : "zh";
+  return readSetting("sshnat.language") === "en" ? "en" : "zh";
 }
 
 function applyLanguageDom(language: Locale) {
@@ -203,33 +206,20 @@ function applyLanguageDom(language: Locale) {
 
 export function setLanguage(language: Locale) {
   const previous = app.language;
-  const previousStorage = getStorage()?.getItem("sshnat.language") ?? null;
+  const previousStorage = readSetting("sshnat.language");
   // 先乐观切换，保证交互即时；后端（托盘语言来源）写入失败则回滚并提示。
   app.language = language;
   applyLanguageDom(language);
   return SettingsService.SetLanguage(language)
     .then(() => {
-      getStorage()?.setItem("sshnat.language", language);
+      writeSetting("sshnat.language", language);
     })
     .catch((error: unknown) => {
       app.language = previous;
       applyLanguageDom(previous);
-      if (previousStorage) getStorage()?.setItem("sshnat.language", previousStorage);
+      if (previousStorage) writeSetting("sshnat.language", previousStorage);
       pushToast("error", `${t(previous, "settings.language")}: ${errorMessage(error)}`);
     });
-}
-
-/** Browsers provide Storage, while SSR and some test runners expose a partial global. */
-function getStorage(): Storage | undefined {
-  const candidate = (globalThis as { localStorage?: unknown }).localStorage;
-  if (
-    candidate &&
-    typeof (candidate as Storage).getItem === "function" &&
-    typeof (candidate as Storage).setItem === "function"
-  ) {
-    return candidate as Storage;
-  }
-  return undefined;
 }
 
 export function setTheme(mode: ThemeMode) {
@@ -283,7 +273,7 @@ export async function initApp(): Promise<() => void> {
     if ((persisted === "en" || persisted === "zh") && persisted !== app.language) {
       app.language = persisted;
       if (typeof document !== "undefined") document.documentElement.lang = persisted === "en" ? "en" : "zh-CN";
-      getStorage()?.setItem("sshnat.language", persisted);
+      writeSetting("sshnat.language", persisted);
     } else if (!persisted) {
       SettingsService.SetLanguage(app.language).catch(() => {});
     }

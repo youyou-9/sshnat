@@ -1,19 +1,9 @@
+import { readSetting, writeSetting } from "./storage";
+
 export type ThemeMode = "system" | "dark" | "light";
 
-function getStorage(): Storage | undefined {
-  const candidate = (globalThis as { localStorage?: unknown }).localStorage;
-  if (
-    candidate &&
-    typeof (candidate as Storage).getItem === "function" &&
-    typeof (candidate as Storage).setItem === "function"
-  ) {
-    return candidate as Storage;
-  }
-  return undefined;
-}
-
 export function loadTheme(): ThemeMode {
-  const saved = getStorage()?.getItem("sshnat.theme");
+  const saved = readSetting("sshnat.theme");
   if (saved === "dark" || saved === "light" || saved === "system") return saved;
   return "system";
 }
@@ -26,5 +16,5 @@ export function applyTheme(mode: ThemeMode) {
   } else {
     root.setAttribute("data-theme", mode);
   }
-  getStorage()?.setItem("sshnat.theme", mode);
+  writeSetting("sshnat.theme", mode);
 }

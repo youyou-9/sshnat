@@ -12,7 +12,7 @@
 [![Wails Version](https://img.shields.io/badge/Wails-v3.0.0--beta.11-DF0000?logo=wails)]()
 [![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)]()
-[![Version](https://img.shields.io/badge/version-v1.1.1-2dd4bf)](https://github.com/youyou-9/sshnat/releases)
+[![Version](https://img.shields.io/badge/version-v1.1.2-2dd4bf)](https://github.com/youyou-9/sshnat/releases)
 
 [🇬🇧 English Documentation](README.md) · [🇨🇳 简体中文](README_zh.md)
 
