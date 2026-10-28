@@ -100,6 +100,8 @@ daemon 是否退出；目标可用性使用实际转发服务探测。
 - macOS `.app` 内 `Contents/MacOS/sshnat` 保留执行权限；Windows 包为 `.zip`。
 - package job 生成 `SHA256SUMS`，release job 再次验证；下载后执行 `sha256sum -c SHA256SUMS` 验证文件。
 - 最终 tag 与运行时/原生包版本一致，工作树已提交，发行说明列出用户可见的新功能和修复。
+- 发行说明直接取自 `CHANGELOG.md` 中对应 `## <版本>` 小节：release job 用 `body_path` 发布，
+  所以发布页展示的是改动内容本身；打完 tag 前先确认该小节已写好。
 
 PR、`main` 推送与手动 workflow_dispatch 会生成并解压校验九个发行包，验证文档、Unix 执行权限及
 `SHA256SUMS`，并上传 `release-files` artifact；非 tag 构建显示 `dev`。这些构建不会自动创建
