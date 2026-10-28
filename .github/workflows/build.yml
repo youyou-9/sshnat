@@ -341,6 +341,26 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out the tag to read CHANGELOG.md
+        uses: actions/checkout@v4
+
+      - name: Build release notes from CHANGELOG.md
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          # 把本版本对应的 CHANGELOG 小节直接当作发布说明正文：发布页展示改动
+          # 内容本身，而不是一句「详见 CHANGELOG」的链接。
+          awk -v ver="$version" '
+            $0 ~ "^## " ver "([^0-9.]|$)" { capture = 1; next }
+            capture && /^## / { exit }
+            capture { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          if [ ! -s "$RUNNER_TEMP/release-notes.md" ]; then
+            echo "No CHANGELOG section for ${GITHUB_REF_NAME}; falling back to a pointer." >&2
+            printf 'See CHANGELOG.md for the changes in %s.\n' "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-notes.md"
+          fi
+          cat "$RUNNER_TEMP/release-notes.md"
+
       - name: Download verified release packages
         uses: actions/download-artifact@v4
         with:
@@ -358,6 +378,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: SSHNat ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, '-') }}
-          generate_release_notes: true
+          body_path: ${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
