@@ -15,6 +15,15 @@
   in place, so every surface updates immediately (`state-tunnels.test.ts` locks
   both guarantees).
 
+### Changed
+
+- Dev toolchain refresh: `undici` moved to `8.12.3` (eight high-severity
+  advisories reached it through `jsdom`). The dependency gate now fails on
+  moderate-and-above findings instead of any finding at all, because
+  `deepmerge` — pulled in by `@sveltejs/vite-plugin-svelte` — has a
+  low-severity advisory with no fixed release, and it is only used to merge
+  build configuration (see `DEPENDENCY_AUDIT.md`).
+
 ## 1.1.2 — recoverable startup
 
 ### Fixed

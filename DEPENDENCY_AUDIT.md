@@ -57,6 +57,23 @@ Between the 1.1.1 release and the 1.1.2 build, three more advisories landed:
 Go `1.26.10`; `npm audit` reports **0 vulnerabilities** and `govulncheck`
 **0 reachable vulnerabilities** for the 1.1.2 tree.
 
+### 2026-10 follow-up: dev-toolchain advisories and the audit threshold
+
+Building 1.1.3, the audit step failed again on freshly published advisories that
+sit entirely in the build toolchain:
+
+| Component | Advisories | Repair |
+| --- | --- | --- |
+| `undici@8.12.1` (via `jsdom`) | GHSA-4qv8-2p9j-2685 and seven more (EventSource/WebSocket DoS, SRI bypass, redirect cache poisoning, TLS option drops) | `npm audit fix` → `undici@8.12.3` |
+| `deepmerge@4.3.1` (via `@sveltejs/vite-plugin-svelte`) | GHSA-gcqx-w48m-w2h4 (prototype poisoning in `mergeObject`) | **No fixed release exists**; still present |
+
+The quality gate therefore runs `npm audit --audit-level=moderate`: moderate and
+above still fail the build (that is what caught `undici`), while an unfixable
+low-severity advisory in a build-only dependency no longer blocks releases. The
+shipped artifacts contain no npm runtime dependencies at all — the frontend is
+compiled to static assets and embedded in the Go binary — so `deepmerge` is not
+reachable in a user installation.
+
 ## Verification after repair
 
 The following passed on Windows/amd64 with Go `1.26.9`:

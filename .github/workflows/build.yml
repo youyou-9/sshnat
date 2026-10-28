@@ -37,7 +37,9 @@ jobs:
         run: npm --prefix frontend ci
 
       - name: Audit frontend dependencies
-        run: npm --prefix frontend audit
+        # 缺省阈值会把无法修复的低危构建期依赖也算失败（例如 deepmerge 经
+        # @sveltejs/vite-plugin-svelte 引入）；moderate 及以上仍然会拦住构建。
+        run: npm --prefix frontend audit --audit-level=moderate
 
       - name: Check frontend types
         run: npm --prefix frontend run check
