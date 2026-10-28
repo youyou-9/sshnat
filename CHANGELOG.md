@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.3 — live tunnel status
+
+### Fixed
+
+- **Tunnel cards stayed on "Connecting…" after the tunnel was actually up.**
+  Wails bindings hand back generated model *class instances* (`TunnelView`,
+  `Host`), and Svelte 5 only proxies plain objects and arrays. The status event
+  wrote `tunnel.status = "connected"` into data nothing was observing, so the
+  cards, the "active tunnels" KPI, the TCP session counter and the traffic
+  totals all froze on their first values — while the tunnel itself was
+  forwarding fine. Tunnel and host lists are now flattened into plain objects
+  on ingest, and status/stats events replace the entry instead of mutating it
+  in place, so every surface updates immediately (`state-tunnels.test.ts` locks
+  both guarantees).
+
 ## 1.1.2 — recoverable startup
 
 ### Fixed

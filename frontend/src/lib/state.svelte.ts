@@ -281,12 +281,16 @@ export async function initApp(): Promise<() => void> {
 
   const offStatus = Events.On(EV.tunnelStatus, (ev: any) => {
     const d: StatusEvent = Array.isArray(ev?.data) ? ev.data[0] : (ev?.data ?? ev);
-    const t = app.tunnels.find((x) => x.id === d.tunnelId);
-    if (!t) return;
+    const index = app.tunnels.findIndex((x) => x.id === d.tunnelId);
+    if (index < 0) return;
     statusEventRevisions.set(d.tunnelId, (statusEventRevisions.get(d.tunnelId) ?? 0) + 1);
-    t.status = d.status;
-    t.running = d.status !== "stopped" && d.status !== "error";
-    t.error = d.error ?? "";
+    // 整体替换而不是就地赋值：无论条目是代理还是普通对象，都能触发重渲染。
+    app.tunnels[index] = {
+      ...app.tunnels[index],
+      status: d.status,
+      running: d.status !== "stopped" && d.status !== "error",
+      error: d.error ?? "",
+    };
     if (d.status === "reconnecting" && d.nextInMs) {
       app.nextRetryAt[d.tunnelId] = Date.now() + d.nextInMs;
     } else {
@@ -304,13 +308,11 @@ export async function initApp(): Promise<() => void> {
     const d: StatsEvent = Array.isArray(ev?.data) ? ev.data[0] : (ev?.data ?? ev);
     pushHistory(app.txHistory, d.tunnelId, d.tx);
     pushHistory(app.rxHistory, d.tunnelId, d.rx);
-    const t = app.tunnels.find((x) => x.id === d.tunnelId);
-    if (t) {
-      t.stats = {
-        tx: d.txTotal,
-        rx: d.rxTotal,
-        activeConn: d.conns,
-        totalConn: d.totalConns,
+    const index = app.tunnels.findIndex((x) => x.id === d.tunnelId);
+    if (index >= 0) {
+      app.tunnels[index] = {
+        ...app.tunnels[index],
+        stats: { tx: d.txTotal, rx: d.rxTotal, activeConn: d.conns, totalConn: d.totalConns },
       };
     }
     recalculateTotalRates();
@@ -338,10 +340,25 @@ function last(arr?: number[]): number {
   return arr && arr.length > 0 ? arr[arr.length - 1] : 0;
 }
 
+/**
+ * Wails 绑定返回的是生成的模型类实例（TunnelView/Host/...），而不是普通对象。
+ * Svelte 5 的 `$state` 只把普通对象与数组包成响应式代理，类实例会被原样保留：
+ * 后端推送状态时 `tunnel.status = "connected"` 改的是数据，界面却永远不重渲染，
+ * 表现为“已经连上却一直显示连接中”。所以入库前统一拍平成普通对象。
+ */
+function plainObject<T extends object>(value: T): T {
+  return { ...value } as T;
+}
+
+function plainTunnel(view: Tunnel): Tunnel {
+  return { ...view, stats: { ...view.stats } };
+}
+
 export async function refreshTunnels() {
   app.loading = true;
   try {
-    app.tunnels = (await TunnelService.List()) ?? [];
+    const list = (await TunnelService.List()) ?? [];
+    app.tunnels = list.map((view) => plainTunnel(view));
     recalculateTotalRates();
   } finally {
     app.loading = false;
@@ -349,7 +366,8 @@ export async function refreshTunnels() {
 }
 
 export async function refreshHosts() {
-  app.hosts = (await HostService.List()) ?? [];
+  const list = (await HostService.List()) ?? [];
+  app.hosts = list.map((host) => plainObject(host));
 }
 
 const pendingTunnelOperations = new Map<string, Promise<void>>();
