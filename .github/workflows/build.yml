@@ -349,18 +349,10 @@ jobs:
       - name: Build release notes from CHANGELOG.md
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
           # 把本版本对应的 CHANGELOG 小节直接当作发布说明正文：发布页展示改动
-          # 内容本身，而不是一句「详见 CHANGELOG」的链接。
-          awk -v ver="$version" '
-            $0 ~ "^## " ver "([^0-9.]|$)" { capture = 1; next }
-            capture && /^## / { exit }
-            capture { print }
-          ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
-          if [ ! -s "$RUNNER_TEMP/release-notes.md" ]; then
-            echo "No CHANGELOG section for ${GITHUB_REF_NAME}; falling back to a pointer." >&2
-            printf 'See CHANGELOG.md for the changes in %s.\n' "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-notes.md"
-          fi
+          # 内容本身，而不是一句「详见 CHANGELOG」的链接。脚本会把硬换行的段落
+          # 还原成整行——GitHub 会把发布说明里的单个换行渲染成硬换行。
+          python3 scripts/release_notes.py "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-notes.md"
           cat "$RUNNER_TEMP/release-notes.md"
 
       - name: Download verified release packages
