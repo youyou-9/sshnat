@@ -9,10 +9,10 @@
 
 [![Build Status](https://github.com/youyou-9/sshnat/actions/workflows/build.yml/badge.svg)](https://github.com/youyou-9/sshnat/actions/workflows/build.yml)
 [![Go Version](https://img.shields.io/badge/Go-1.26.10+-00ADD8?logo=go)]()
-[![Wails Version](https://img.shields.io/badge/Wails-v3.0.0--beta.11-DF0000?logo=wails)]()
+[![Wails Version](https://img.shields.io/badge/Wails-v3.1.0-DF0000?logo=wails)]()
 [![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)]()
-[![Version](https://img.shields.io/badge/version-v1.1.3-2dd4bf)](https://github.com/youyou-9/sshnat/releases)
+[![Version](https://img.shields.io/badge/version-v1.1.4-2dd4bf)](https://github.com/youyou-9/sshnat/releases)
 
 [🇬🇧 English Documentation](README.md) · [🇨🇳 简体中文](README_zh.md)
 
@@ -31,6 +31,7 @@
 - [📁 便携模式与配置规范](#-便携模式与配置规范)
 - [🔐 主机高级设置](#-主机高级设置)
 - [🖥️ 系统托盘操作说明](#-系统托盘操作说明)
+- [🩺 故障排查](#-故障排查)
 - [🧪 测试与质量门禁](#-测试与质量门禁)
 - [📄 开源协议](#-开源协议)
 
@@ -241,6 +242,39 @@ Agent socket、密钥策略或超时；运行复制的多跳命令前，需在 O
 1. **最小化到托盘**：点击窗口右上角关闭按钮（X），应用自动隐藏至系统托盘，后台所有隧道保持畅通连接。
 2. **免开窗口快捷管理**：右键托盘图标，菜单列出最近使用的高频隧道，直接点击勾选框即可静默启停该隧道。
 3. **全局控制**：托盘提供“全部启动”、“全部停止”、“打开配置目录”及“彻底退出”操作。
+
+---
+
+### 🩺 故障排查
+
+**双击 exe 之后没有任何窗口。** SSHNat 用 WebView2 渲染界面，而 WebView2 不会给
+完整性级别低于 *medium* 的进程挂接控制器。文件夹本身可能带一个「低」的强制完整性
+标记，里面的文件全部继承它，放在那儿的 exe 就以低完整性启动，在创建窗口时直接
+失败退出。先看目标文件夹的 ACL：
+
+```powershell
+icacls "D:\path\to\folder"
+```
+
+如果输出末尾是 `Mandatory Label\Low Mandatory Level`，把 `sshnat.exe` 挪到普通
+文件夹（例如 `%LOCALAPPDATA%\Programs\SSHNat\`），或者在**管理员** PowerShell 里
+修正该文件夹：
+
+```powershell
+icacls "D:\path\to\folder" /setintegritylevel (OI)(CI)Medium
+```
+
+1.1.4 起程序会自己识别这种情况并弹窗说明，不再静默退出；每次启动也都会记录到
+`%LOCALAPPDATA%\SSHNat\logs\startup.log`（超过 1 MB 自动轮转）。
+
+**「无法验证发布者 / Unknown publisher」。** 发行包没有代码签名，Windows 在运行
+从网络下载的 exe 前会要求确认。这个提示属正常现象：点「运行」，或先解除锁定
+`Unblock-File .\sshnat.exe`（也可在文件属性的「常规」页勾选「解除锁定」）。想彻底
+去掉提示需要购买代码签名证书。
+
+**白屏。** WebView2 配置目录损坏会让前端 bundle 挂不上去。1.1.2 起窗口里会给出
+「重试」和「重置界面数据并重试」面板；WebView2 配置目录也已独立到
+`%APPDATA%\SSHNat\webview`，升级后会从干净的配置开始。
 
 ---
 

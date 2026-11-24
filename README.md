@@ -9,10 +9,10 @@
 
 [![Build Status](https://github.com/youyou-9/sshnat/actions/workflows/build.yml/badge.svg)](https://github.com/youyou-9/sshnat/actions/workflows/build.yml)
 [![Go Version](https://img.shields.io/badge/Go-1.26.10+-00ADD8?logo=go)]()
-[![Wails Version](https://img.shields.io/badge/Wails-v3.0.0--beta.11-DF0000?logo=wails)]()
+[![Wails Version](https://img.shields.io/badge/Wails-v3.1.0-DF0000?logo=wails)]()
 [![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)]()
-[![Version](https://img.shields.io/badge/version-v1.1.3-2dd4bf)](https://github.com/youyou-9/sshnat/releases)
+[![Version](https://img.shields.io/badge/version-v1.1.4-2dd4bf)](https://github.com/youyou-9/sshnat/releases)
 
 [🇬🇧 English Documentation](README.md) · [🇨🇳 简体中文](README_zh.md)
 
@@ -31,6 +31,7 @@
 - [📁 Portable Mode & Config Layout](#-portable-mode--config-layout)
 - [🔐 Advanced Host Settings](#-advanced-host-settings)
 - [🖥️ System Tray Capabilities](#-system-tray-capabilities)
+- [🩺 Troubleshooting](#-troubleshooting)
 - [🧪 Testing & Quality Gate](#-testing--quality-gate)
 - [📄 License](#-license)
 
@@ -259,6 +260,44 @@ when moving credentials to a private location. Private key files and
 - **Background Daemon**: Closing the window hides it into the tray, ensuring active forwarders remain uninterrupted.
 - **Quick Switcher**: The tray menu dynamically presents the most recently used tunnels as interactive checkboxes, enabling one-click background toggling.
 - **Global Actions**: Start All, Stop All, Open Config Folder, and Quit.
+
+---
+
+### 🩺 Troubleshooting
+
+**Double-clicking the executable does nothing.** SSHNat renders its window with
+WebView2, and WebView2 refuses to attach a controller to a process that runs
+below *medium* integrity. A folder can carry a low mandatory integrity label
+that every file inside it inherits; an executable stored there starts at low
+integrity and dies while the window is being created. To check a folder:
+
+```powershell
+icacls "D:\path\to\folder"
+```
+
+If the output ends with `Mandatory Label\Low Mandatory Level`, either move
+`sshnat.exe` to an ordinary folder (for example
+`%LOCALAPPDATA%\Programs\SSHNat\`) or repair the folder from an **elevated**
+PowerShell:
+
+```powershell
+icacls "D:\path\to\folder" /setintegritylevel (OI)(CI)Medium
+```
+
+Since 1.1.4 the app detects this case and explains it in a dialog instead of
+exiting silently, and every run is journaled to
+`%LOCALAPPDATA%\SSHNat\logs\startup.log` (rotated past 1 MB).
+
+**"Unknown publisher / 无法验证发布者".** Release binaries are not code-signed,
+so Windows asks for confirmation before running an executable downloaded from
+the internet. The prompt is expected: choose *Run*, or clear the block with
+`Unblock-File .\sshnat.exe` (or *Properties → Unblock*). Removing the prompt
+entirely would require a paid code-signing certificate.
+
+**Blank white window.** A damaged WebView2 profile can stop the UI bundle from
+mounting. Since 1.1.2 the window offers a recovery panel with *Retry* and
+*Reset UI data & retry*, and the WebView2 profile now lives in its own folder
+(`%APPDATA%\SSHNat\webview`) so an upgrade starts from a clean profile.
 
 ---
 

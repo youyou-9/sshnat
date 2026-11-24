@@ -69,6 +69,14 @@ def unwrap(lines: list[str]) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    # A Windows console defaults to the OEM code page, which turns the em dash
+    # in a CHANGELOG heading into an unreadable byte pair. Pin the output to
+    # UTF-8 so the notes are the same everywhere.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
     if len(argv) != 2:
         print("usage: release_notes.py <version>", file=sys.stderr)
         return 2

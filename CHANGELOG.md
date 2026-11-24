@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.1.4 — start-up guard, start-up log, Wails 3.1.0
+
+### Fixed
+
+- **A double-click that produced no window now explains itself.** When the
+  executable sits in a folder that carries a low mandatory integrity label,
+  Windows starts it at low integrity, and WebView2 refuses to attach a
+  controller to a host below medium: the window fails during creation and the
+  process exits within a few hundred milliseconds without saying anything. The
+  desktop client now reads its own integrity level before creating the window,
+  and when it is below medium it shows a native dialog naming the folder, the
+  level and two concrete fixes — move the executable to an ordinary folder, or
+  repair the folder from an elevated PowerShell with
+  `icacls "<folder>" /setintegritylevel (OI)(CI)Medium`.
+
+### Added
+
+- Start-up log at `%LOCALAPPDATA%\SSHNat\logs\startup.log`, rotated once it
+  passes 1 MB. Wails prints its WebView2 diagnostics through the standard
+  logger, so the log keeps "environment created", the controller error and its
+  stack trace even when no window ever appears. When that folder cannot be
+  written — a low-integrity process is not allowed to — the log falls back to
+  the temp directory, and the dialog says the log is unavailable instead of
+  naming a file that was never created.
+
+### Changed
+
+- Desktop shell upgraded to Wails v3.1.0 with the matching
+  `@wailsio/runtime` 3.1.0, which adds WebView2 controller recovery and aligns
+  the shell with the current WebView2 158 runtime. No application code needed
+  migrating.
+- README gained a troubleshooting section covering the silent start-up, the
+  "unknown publisher" prompt and the blank window.
+
 ## 1.1.3 — live tunnel status
 
 ### Fixed

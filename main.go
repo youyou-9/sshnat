@@ -16,6 +16,7 @@ import (
 	"github.com/sshnat/sshnat/core/config"
 	"github.com/sshnat/sshnat/core/stats"
 	"github.com/sshnat/sshnat/core/supervisor"
+	"github.com/sshnat/sshnat/internal/startup"
 	"github.com/sshnat/sshnat/internal/version"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -38,6 +39,42 @@ func main() {
 	settings, err := store.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+
+	// The desktop window is hosted by WebView2, which gives up before the UI
+	// can report anything when the process runs below medium integrity — and
+	// Windows does exactly that for an executable sitting in a folder tagged
+	// with a low mandatory label. Redirect the standard logger to a file
+	// first, because Wails writes its WebView2 diagnostics there and that log
+	// is the only trace left when the window never appears.
+	if !serverMode {
+		exe := executablePath()
+		stopLog, logPath, logErr := startup.Begin(fmt.Sprintf("%s %s starting (exe=%s)", version.Name, version.Current(), exe))
+		defer stopLog()
+		if logErr != nil {
+			log.Printf("startup log unavailable: %v", logErr)
+		}
+		level, levelErr := startup.IntegrityLevel()
+		switch {
+		case levelErr != nil:
+			log.Printf("integrity level check failed: %v", levelErr)
+		case !level.AllowsWebView2():
+			exeDir := ""
+			if exe != "" {
+				exeDir = filepath.Dir(exe)
+			}
+			title, body := startup.AbortMessage(settings.Language, startup.Report{
+				Exe:     exe,
+				ExeDir:  exeDir,
+				Level:   level,
+				LogPath: logPath,
+			})
+			log.Printf("aborting: process runs at %s integrity, WebView2 needs at least medium", level)
+			startup.Alert(title, body)
+			return
+		default:
+			log.Printf("integrity level %s: WebView2 allowed", level)
+		}
 	}
 
 	reg := stats.NewRegistry()
@@ -291,6 +328,17 @@ func webviewDataPath() string {
 		return ""
 	}
 	return filepath.Join(dir, "SSHNat", "webview")
+}
+
+// executablePath 是当前进程的可执行文件路径。启动自检要把「程序在哪个文件夹」
+// 写进日志和错误对话框，因为低完整性标记是按文件夹继承的，用户只有知道具体
+// 目录才能把 exe 挪出去。取不到路径时返回空串。
+func executablePath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return exe
 }
 
 // openConfigDir opens the directory containing the active configuration with
