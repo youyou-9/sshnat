@@ -57,6 +57,19 @@ Between the 1.1.1 release and the 1.1.2 build, three more advisories landed:
 Go `1.26.10`; `npm audit` reports **0 vulnerabilities** and `govulncheck`
 **0 reachable vulnerabilities** for the 1.1.2 tree.
 
+### 2026-11 follow-up: Go 1.26.11 required
+
+The 1.1.4 release candidate failed the reachable-vulnerability check with one
+new standard-library advisory:
+
+| Component | Advisories | Repair |
+| --- | --- | --- |
+| Go standard library (`net/http`) | GO-2026-6859 (HTTP/1 server crash from a `MaxBytesReader` header race) | Require Go `1.26.11` or newer |
+
+`go.mod`, the CI workflow, both Docker builder images, the release checklist and
+both READMEs now name Go `1.26.11`; `govulncheck@v1.8.0 ./... -tags gtk3`
+reports **0 reachable vulnerabilities** for the 1.1.4 tree.
+
 ### 2026-10 follow-up: dev-toolchain advisories and the audit threshold
 
 Building 1.1.3, the audit step failed again on freshly published advisories that

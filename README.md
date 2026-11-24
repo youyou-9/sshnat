@@ -8,7 +8,7 @@
 *现代轻量级 SSH 端口转发客户端与无头后台守护进程*
 
 [![Build Status](https://github.com/youyou-9/sshnat/actions/workflows/build.yml/badge.svg)](https://github.com/youyou-9/sshnat/actions/workflows/build.yml)
-[![Go Version](https://img.shields.io/badge/Go-1.26.10+-00ADD8?logo=go)]()
+[![Go Version](https://img.shields.io/badge/Go-1.26.11+-00ADD8?logo=go)]()
 [![Wails Version](https://img.shields.io/badge/Wails-v3.1.0-DF0000?logo=wails)]()
 [![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)]()
@@ -102,8 +102,8 @@ sshnat/
 ### 🚀 Quick Start & Building
 
 #### Prerequisites
-- **Go**: 1.26.10+ (includes the security fixes required by the release checks)
-  - For optional obfuscated builds, install Go 1.26.10 directly from [go.dev/dl](https://go.dev/dl/). Garble cannot patch an automatically downloaded toolchain inside Go's module cache.
+- **Go**: 1.26.11+ (includes the security fixes required by the release checks)
+  - For optional obfuscated builds, install Go 1.26.11 directly from [go.dev/dl](https://go.dev/dl/). Garble cannot patch an automatically downloaded toolchain inside Go's module cache.
 - **Node.js**: 24.15+ & npm (the locked Vite/Vitest/jsdom toolchain requires Node 24.15+)
 - **Wails 3 CLI**:
   ```bash
