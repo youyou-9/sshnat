@@ -107,7 +107,7 @@ sshnat/
 - **Node.js**：24.15+ 与 npm（锁定的 Vite/Vitest/jsdom 工具链要求 Node 24.15+）
 - **Wails 3 CLI**：
   ```bash
-  go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.11
+  go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0
   ```
 
 #### 构建桌面客户端

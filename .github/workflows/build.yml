@@ -135,7 +135,7 @@ jobs:
       - name: Install wails3 CLI
         env:
           CGO_ENABLED: "0"
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.11
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0
 
       - name: Build
         shell: bash

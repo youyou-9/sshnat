@@ -28,7 +28,7 @@ Go `1.26.3` toolchain found these reachable advisories:
 `go.mod`, all CI builds, Docker builder images, the Docker Taskfile default,
 and both READMEs now use Go `1.26.9` as the minimum release baseline. Go's
 automatic toolchain selection successfully downloaded and used `go1.26.9`
-on Windows. Wails and `@wailsio/runtime` remain matched at `v3.0.0-beta.11`.
+on Windows. Wails and `@wailsio/runtime` are matched at `v3.1.0` since 1.1.4 (upgraded from `v3.0.0-beta.11` to host the current WebView2 runtime).
 
 ### 2026-10 follow-up: Go 1.26.9 required
 

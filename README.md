@@ -107,7 +107,7 @@ sshnat/
 - **Node.js**: 24.15+ & npm (the locked Vite/Vitest/jsdom toolchain requires Node 24.15+)
 - **Wails 3 CLI**:
   ```bash
-  go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.11
+  go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0
   ```
 
 #### Building Desktop App
